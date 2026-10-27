@@ -1,0 +1,24 @@
+# SmartArchive – Web-App und Hintergrund-Worker teilen sich ein Image und den Datenordner.
+services:
+  app:
+    build: .
+    image: smartarchive:latest
+    env_file: .env
+    volumes:
+      - ./data:/data
+    ports:
+      # Nur lokal erreichbar. Zugriff vom Handy über Tailscale (siehe README).
+      - "127.0.0.1:8080:8080"
+    restart: unless-stopped
+
+  worker:
+    image: smartarchive:latest
+    env_file: .env
+    command: ["python", "-m", "app.worker"]
+    volumes:
+      - ./data:/data
+    depends_on:
+      - app
+    restart: unless-stopped
+    healthcheck:
+      disable: true
