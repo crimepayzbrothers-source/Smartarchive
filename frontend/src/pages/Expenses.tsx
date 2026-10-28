@@ -39,9 +39,10 @@ export default function Expenses({ params }: { params: URLSearchParams }) {
       <section className="kpis">
         <div><span className="kpi-label">Erfasst {year}</span><strong>{money(s.total)}</strong>
           {change !== null && <span className="muted">{change >= 0 ? "+" : ""}{change} % zum Vorjahr</span>}</div>
-        <div><span className="kpi-label">Bestätigt</span><strong>{money(s.confirmed)}</strong><span className="muted">fließt in den Export</span></div>
+        <div><span className="kpi-label">Im Export</span><strong>{money(s.confirmed)}</strong><span className="muted">erfasste Aufwendungen</span></div>
+        <div><span className="kpi-label">Automatisch ausgelesen</span><strong>{money(s.auto_total)}</strong>
+          <span className="muted">{s.auto_count} Beleg{s.auto_count === 1 ? "" : "e"}, noch nicht geprüft</span></div>
         <div><span className="kpi-label">Noch offen</span><strong>{money(s.unconfirmed)}</strong><span className="muted">Entwurf oder ungeklärt</span></div>
-        <div><span className="kpi-label">Nicht sofort abziehbar</span><strong>{money(s.non_deductible)}</strong><span className="muted">gesondert ausgewiesen</span></div>
       </section>
 
       {s.issues.length > 0 && (
@@ -62,7 +63,8 @@ export default function Expenses({ params }: { params: URLSearchParams }) {
 
       <section className="panel export">
         <h2>Export für die Steuererklärung {year}</h2>
-        <p className="muted">Enthält nur bestätigte Positionen; offene stehen in Excel auf einem eigenen Blatt. Jede Zeile verweist auf ihren Beleg.</p>
+        <p className="muted">Alle erfassten Aufwendungen je Objekt, jede Zeile mit Verweis auf ihren Beleg. Spalte „Erfassung“ zeigt, ob ein
+          Betrag automatisch ausgelesen oder von Ihnen geprüft ist. Entwürfe stehen in Excel auf dem Blatt „Offen“.</p>
         <div className="row-actions">
           <a className="primary button" href={`/api/export/expenses.xlsx?${qs}`}><Icon name="down" size={18} /> Excel</a>
           <a className="secondary button" href={`/api/export/expenses.csv?${qs}`}>CSV</a>
@@ -71,7 +73,7 @@ export default function Expenses({ params }: { params: URLSearchParams }) {
       </section>
 
       {s.properties.length === 0 ? (
-        <Empty icon="euro" title={`Keine bezahlten Ausgaben in ${year}`}>Positionen erfassen Sie am Beleg. Maßgeblich für das Jahr ist das Zahlungsdatum.</Empty>
+        <Empty icon="euro" title={`Keine Ausgaben in ${year}`}>Rechnungen im Bereich Vermietung werden automatisch erfasst. Das Jahr richtet sich nach dem Zahlungsdatum, ersatzweise nach dem Rechnungsdatum.</Empty>
       ) : s.properties.map((p: any) => (
         <section key={p.property} className="panel">
           <header className="panel-head"><h2>{p.property}</h2><strong>{money(p.total)}</strong></header>
@@ -90,8 +92,8 @@ export default function Expenses({ params }: { params: URLSearchParams }) {
       {openItems.length > 0 && (
         <section className="panel">
           <h2>Ohne Zahlungsdatum ({openItems.length})</h2>
-          <p className="muted">Diese Positionen fehlen im Jahr, bis ein Zahlungsdatum eingetragen ist. Am einfachsten: Umsätze des
-            Mietkontos einlesen – passende Zahlungen tragen das Datum automatisch ein.</p>
+          <p className="muted">Diese Positionen sind dem Jahr nach Rechnungsdatum zugeordnet. Am einfachsten ergänzen Sie das Zahlungsdatum,
+            indem Sie die Umsätze des Mietkontos einlesen – passende Zahlungen tragen es automatisch ein.</p>
           <PositionTable items={openItems} labels={labels} />
         </section>
       )}
@@ -119,7 +121,8 @@ function PositionTable({ items, labels }: { items: any[]; labels: Record<string,
               <td>{labels[e.category_key] || e.category_key}</td>
               <td>{e.property_name || "–"}</td>
               <td className="num">{money(e.amount_cents)}</td>
-              <td><span className={`status-pill ${e.status}`}>{e.status === "bestaetigt" ? "Bestätigt" : e.status === "ungeklaert" ? "Ungeklärt" : "Entwurf"}</span></td>
+              <td><span className={`status-pill ${e.origin === "auto" && e.status === "bestaetigt" ? "auto" : e.status}`}>
+                {e.status !== "bestaetigt" ? (e.status === "ungeklaert" ? "Ungeklärt" : "Entwurf") : e.origin === "auto" ? "Automatisch" : "Geprüft"}</span></td>
             </tr>
           ))}
         </tbody>
@@ -222,11 +225,11 @@ function MissingPanel({ items, year, onChanged }: { items: any[]; year: number; 
   const [busy, setBusy] = useState(false);
   const ready = items.filter((i) => i.amount_cents && i.property_id).length;
   const bulk = async () => {
-    if (!confirm(`${ready} Rechnung(en) als Entwurf übernehmen? Entwürfe zählen erst nach Ihrer Bestätigung.`)) return;
+    if (!confirm(`${ready} Rechnung(en) mit dem erkannten Betrag erfassen?`)) return;
     setBusy(true);
     try {
       const r = await post(`/api/expenses/missing/drafts?year=${year}`);
-      toast({ kind: "ok", text: `${r.created} Entwürfe angelegt${r.skipped ? `, ${r.skipped} brauchen noch Angaben` : ""}.` });
+      toast({ kind: "ok", text: `${r.created} erfasst${r.skipped ? `, ${r.skipped} brauchen noch Angaben` : ""}.` });
       onChanged();
     } catch (e: any) {
       toast({ kind: "error", text: e.message });
@@ -237,10 +240,10 @@ function MissingPanel({ items, year, onChanged }: { items: any[]; year: number; 
   return (
     <section className="panel missing">
       <h2><Icon name="receipt" size={18} /> Rechnungen ohne Ausgabe ({items.length})</h2>
-      <p className="muted">Belege aus {year} im Bereich Vermietung, zu denen noch keine Ausgabe erfasst ist – etwa aus dem Dropbox-Import.
-        Werte sind aus dem Text erkannt; bitte kurz prüfen.</p>
+      <p className="muted">Belege aus {year}, die nicht automatisch erfasst werden konnten – meist weil kein Endbetrag im Text
+        erkennbar war oder kein Mietobjekt zugeordnet ist. Bitte Betrag ergänzen oder „Keine Ausgabe“ wählen.</p>
       {ready > 0 && (
-        <button className="secondary block" disabled={busy} onClick={bulk}>Alle {ready} als Entwurf übernehmen</button>
+        <button className="secondary block" disabled={busy} onClick={bulk}>Alle {ready} mit erkanntem Betrag erfassen</button>
       )}
       <ul className="missing-list">{items.map((i) => <MissingRow key={i.id} item={i} onChanged={onChanged} />)}</ul>
     </section>

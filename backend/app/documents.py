@@ -10,7 +10,7 @@ import unicodedata
 from pathlib import Path
 from typing import Any
 
-from . import classify, ocr, storage
+from . import classify, invoices, ocr, storage
 from .db import audit, now, row, rows, tx
 
 log = logging.getLogger("smartarchive.documents")
@@ -233,6 +233,7 @@ def process(conn: sqlite3.Connection, document_id: int) -> str:
     if preset:
         with tx(conn):
             status = classify.apply_preset(conn, document_id, json.loads(preset))
+            invoices.ensure_expense(conn, document_id, actor="import")
             index_document(conn, document_id)
         return status
     cand = classify.analyze(conn, document_id)

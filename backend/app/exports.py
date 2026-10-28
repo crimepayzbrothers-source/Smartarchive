@@ -27,6 +27,14 @@ def euro(cents: int | None) -> str:
     return ("-" if cents < 0 else "") + s + " €"
 
 
+YEAR_DATE = "COALESCE(e.paid_on, e.invoice_date, d.doc_date, substr(e.created_at, 1, 10))"
+ORIGIN_LABEL = {"auto": "automatisch ausgelesen", "user": "geprüft", "bank": "aus Kontoumsatz"}
+
+
+def year_basis(e: dict[str, Any]) -> str:
+    return "Zahlung" if e.get("paid_on") else "Rechnung"
+
+
 def expense_rows(conn: sqlite3.Connection, year: int | None = None, property_id: int | None = None,
                  status: str | None = None, open_payment: bool = False) -> list[dict[str, Any]]:
     where, params = ["1=1"], []
@@ -36,7 +44,8 @@ def expense_rows(conn: sqlite3.Connection, year: int | None = None, property_id:
             where.append("substr(COALESCE(e.invoice_date, d.doc_date, e.created_at), 1, 4) = ?")
             params.append(str(year))
     elif year:
-        where.append("substr(e.paid_on, 1, 4) = ?")
+        # Jahr nach Zahlungsdatum; fehlt es, nach Rechnungs-/Dokumentdatum (Spalte „Jahr nach“ im Export)
+        where.append(f"substr({YEAR_DATE}, 1, 4) = ?")
         params.append(str(year))
     if property_id:
         where.append("e.property_id = ?")
@@ -61,9 +70,6 @@ def find_issues(conn: sqlite3.Connection, year: int | None = None) -> list[dict[
         params = [str(year)]
     for e in rows(conn.execute(f"SELECT e.*, d.title AS document_title FROM expenses e LEFT JOIN documents d ON d.id = e.document_id WHERE {cond}", params)):
         label = e["payee"] or e["document_title"] or f"Position {e['id']}"
-        if not e["paid_on"]:
-            issues.append({"kind": "zahlung_offen", "expense_id": e["id"], "document_id": e["document_id"],
-                           "text": f"{label}: Zahlungsdatum fehlt – Steuerjahr unklar."})
         if not e["property_id"]:
             issues.append({"kind": "objekt_fehlt", "expense_id": e["id"], "document_id": e["document_id"],
                            "text": f"{label}: kein Mietobjekt zugeordnet."})
@@ -73,6 +79,12 @@ def find_issues(conn: sqlite3.Connection, year: int | None = None) -> list[dict[
         if e["status"] == "ungeklaert":
             issues.append({"kind": "ungeklaert", "expense_id": e["id"], "document_id": e["document_id"],
                            "text": f"{label}: als ungeklärt markiert."})
+    unpaid = [e for e in rows(conn.execute(f"SELECT e.id FROM expenses e LEFT JOIN documents d ON d.id = e.document_id "
+                                           f"WHERE {cond} AND e.paid_on IS NULL", params))]
+    if unpaid:
+        issues.append({"kind": "zahlung_offen", "count": len(unpaid),
+                       "text": f"{len(unpaid)} Position(en) ohne Zahlungsdatum – dem Jahr nach Rechnungsdatum zugeordnet. "
+                               "Kontoumsätze einlesen trägt das Datum automatisch ein."})
     # mögliche Dubletten: gleicher Betrag + gleicher Aussteller, Datum höchstens 10 Tage auseinander
     dups = rows(conn.execute(
         "SELECT a.id AS a_id, b.id AS b_id, a.document_id AS a_doc, b.document_id AS b_doc, a.payee, a.amount_cents "
@@ -117,10 +129,10 @@ def summary(conn: sqlite3.Connection, year: int, property_id: int | None = None)
     for b in by_prop.values():
         b["categories"] = sorted(b["categories"].values(), key=lambda c: ORDER.get(c["key"], 99))
         props.append(b)
-    prev = conn.execute("SELECT COALESCE(SUM(amount_cents),0) FROM expenses WHERE substr(paid_on,1,4) = ?" +
-                        (" AND property_id = ?" if property_id else ""),
+    prev = conn.execute(f"SELECT COALESCE(SUM(e.amount_cents),0) FROM expenses e LEFT JOIN documents d ON d.id = e.document_id "
+                        f"WHERE substr({YEAR_DATE},1,4) = ?" + (" AND e.property_id = ?" if property_id else ""),
                         [str(year - 1)] + ([property_id] if property_id else [])).fetchone()[0]
-    open_items = expense_rows(conn, year, property_id, open_payment=True)
+    open_items = [e for e in items if not e["paid_on"]]
     return {
         "year": year,
         "total": sum(e["amount_cents"] for e in items),
@@ -129,6 +141,8 @@ def summary(conn: sqlite3.Connection, year: int, property_id: int | None = None)
         "non_deductible": sum(e["amount_cents"] for e in items if not DEDUCTIBLE.get(e["category_key"], True)),
         "previous_year_total": prev,
         "open_payment_count": len(open_items),
+        "auto_count": sum(1 for e in items if e["origin"] == "auto"),
+        "auto_total": sum(e["amount_cents"] for e in items if e["origin"] == "auto"),
         "properties": props,
     }
 
@@ -138,14 +152,15 @@ def summary(conn: sqlite3.Connection, year: int, property_id: int | None = None)
 def to_csv(conn: sqlite3.Connection, year: int, property_id: int | None = None) -> bytes:
     buf = io.StringIO()
     w = csv.writer(buf, delimiter=";", lineterminator="\r\n")
-    w.writerow(["Objekt", "Einheit", "Zahlungsdatum", "Rechnungsdatum", "Aussteller", "Kategorie",
-                "Sofort abziehbar", "Betrag", "Status", "Notiz", "Beleg-ID", "Beleg", "Seite"])
+    w.writerow(["Objekt", "Einheit", "Zahlungsdatum", "Rechnungsdatum", "Jahr nach", "Aussteller", "Kategorie",
+                "Sofort abziehbar", "Betrag", "Status", "Erfassung", "Notiz", "Beleg-ID", "Beleg", "Seite"])
     for e in expense_rows(conn, year, property_id):
         w.writerow([e["property_name"] or "", e["unit_name"] or "", e["paid_on"] or "", e["invoice_date"] or "",
-                    e["payee"], LABEL.get(e["category_key"], e["category_key"]),
+                    year_basis(e), e["payee"], LABEL.get(e["category_key"], e["category_key"]),
                     "ja" if DEDUCTIBLE.get(e["category_key"], True) else "nein",
                     f"{e['amount_cents'] / 100:.2f}".replace(".", ","), STATUS_LABEL.get(e["status"], e["status"]),
-                    e["note"], e["document_id"] or "", e["document_title"] or "", e["page"] or ""])
+                    ORIGIN_LABEL.get(e["origin"], e["origin"]), e["note"], e["document_id"] or "", e["document_title"] or "",
+                    e["page"] or ""])
     return ("﻿" + buf.getvalue()).encode("utf-8")
 
 
@@ -175,7 +190,8 @@ def to_xlsx(conn: sqlite3.Connection, year: int, property_id: int | None = None)
     ws.title = "Übersicht"
     ws.append([f"Ausgaben Vermietung {year}"])
     ws["A1"].font = Font(bold=True, size=14)
-    ws.append(["Nur bestätigte Positionen. Offene Positionen siehe Blatt „Offen“. Keine Steuerberatung."])
+    ws.append(["Erfasste Aufwendungen je Objekt. Jahr nach Zahlungsdatum, ersatzweise Rechnungsdatum. "
+               "Entwürfe siehe Blatt „Offen“. Dokumentation, keine steuerliche Bewertung."])
     ws.append([])
     header(ws, ["Objekt", "Kategorie", "Sofort abziehbar", "Anzahl", "Summe"], [28, 52, 16, 10, 16])
     groups: dict[tuple[str, str], list[dict]] = {}
@@ -190,8 +206,9 @@ def to_xlsx(conn: sqlite3.Connection, year: int, property_id: int | None = None)
     ws.cell(row=ws.max_row, column=5).font = Font(bold=True)
     ws.cell(row=ws.max_row, column=5).number_format = money
 
-    cols = ["Zahlungsdatum", "Rechnungsdatum", "Aussteller", "Kategorie", "Betrag", "Einheit", "Notiz", "Beleg-ID", "Beleg", "Seite"]
-    widths = [14, 14, 28, 44, 14, 14, 36, 10, 40, 8]
+    cols = ["Zahlungsdatum", "Rechnungsdatum", "Aussteller", "Kategorie", "Betrag", "Einheit", "Notiz", "Beleg-ID", "Beleg", "Seite",
+            "Jahr nach", "Erfassung"]
+    widths = [14, 14, 28, 44, 14, 14, 36, 10, 40, 8, 11, 22]
     by_prop: dict[str, list[dict]] = {}
     for e in confirmed:
         by_prop.setdefault(e["property_name"] or "Ohne Objekt", []).append(e)
@@ -201,13 +218,13 @@ def to_xlsx(conn: sqlite3.Connection, year: int, property_id: int | None = None)
         for e in es:
             sheet.append([e["paid_on"], e["invoice_date"], e["payee"], LABEL.get(e["category_key"], e["category_key"]),
                           e["amount_cents"] / 100, e["unit_name"] or "", e["note"], e["document_id"],
-                          e["document_title"] or "", e["page"]])
+                          e["document_title"] or "", e["page"], year_basis(e), ORIGIN_LABEL.get(e["origin"], e["origin"])])
             sheet.cell(row=sheet.max_row, column=5).number_format = money
         sheet.append(["", "", "", "Summe", sum(x["amount_cents"] for x in es) / 100])
         sheet.cell(row=sheet.max_row, column=5).number_format = money
         sheet.cell(row=sheet.max_row, column=4).font = Font(bold=True)
 
-    open_rows = [e for e in items if e["status"] != "bestaetigt"] + expense_rows(conn, year, property_id, open_payment=True)
+    open_rows = [e for e in items if e["status"] != "bestaetigt"]
     sheet = wb.create_sheet("Offen")
     header(sheet, ["Objekt", "Status", "Zahlungsdatum", "Rechnungsdatum", "Aussteller", "Kategorie", "Betrag", "Beleg-ID"],
            [24, 14, 14, 14, 28, 44, 14, 10])

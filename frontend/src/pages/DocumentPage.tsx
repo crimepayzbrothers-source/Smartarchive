@@ -332,6 +332,11 @@ function Expenses({ doc, onChanged }: { doc: any; onChanged: () => void }) {
       toast({ kind: "error", text: e.message });
     }
   };
+  const check = async (eid: number) => {
+    await patch(`/api/expenses/${eid}`, {});
+    toast({ kind: "ok", text: "Als geprüft markiert." });
+    onChanged();
+  };
   const remove = async (eid: number) => {
     if (!confirm("Position löschen?")) return;
     await del(`/api/expenses/${eid}`);
@@ -345,6 +350,9 @@ function Expenses({ doc, onChanged }: { doc: any; onChanged: () => void }) {
         {doc.expenses.length > 0 && <strong className="sum">{money(sum)}</strong>}
       </header>
       {!doc.property_id && <p className="notice warn small">Kein Mietobjekt gewählt – bitte oben zuordnen.</p>}
+      {doc.expenses.some((e: any) => e.origin === "auto") && (
+        <p className="hint">Betrag automatisch aus dem Beleg ausgelesen – bitte kurz vergleichen und „Stimmt“ tippen oder korrigieren.</p>
+      )}
       {doc.expenses.length === 0 && !editing && (
         <p className="muted">Noch keine Position. {sug.amount_cents ? `Erkannter Betrag: ${money(sug.amount_cents)}.` : ""}</p>
       )}
@@ -356,7 +364,9 @@ function Expenses({ doc, onChanged }: { doc: any; onChanged: () => void }) {
               <span className="expense-meta">{e.paid_on ? `bezahlt ${date(e.paid_on)}` : "Zahlungsdatum fehlt"}{e.note ? `, ${e.note}` : ""}</span>
             </button>
             <span className="expense-amount">{money(e.amount_cents)}</span>
-            <span className={`status-pill ${e.status}`}>{e.status === "bestaetigt" ? "Bestätigt" : e.status === "ungeklaert" ? "Ungeklärt" : "Entwurf"}</span>
+            <span className={`status-pill ${e.origin === "auto" && e.status === "bestaetigt" ? "auto" : e.status}`}>
+              {e.status !== "bestaetigt" ? (e.status === "ungeklaert" ? "Ungeklärt" : "Entwurf") : e.origin === "auto" ? "Automatisch" : "Geprüft"}</span>
+            {e.origin === "auto" && <button className="secondary small" onClick={() => check(e.id)}>Stimmt</button>}
             <button className="icon-btn" aria-label="Löschen" onClick={() => remove(e.id)}><Icon name="trash" size={18} /></button>
           </li>
         ))}

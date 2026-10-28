@@ -30,8 +30,24 @@ def init_db() -> None:
     try:
         migrate(conn)
         seed(conn)
+        _autofill_expenses(conn)
     finally:
         conn.close()
+
+
+def _autofill_expenses(conn) -> None:
+    """Einmalig: vorhandene Rechnungen (z. B. aus dem Dropbox-Import) automatisch als Aufwand erfassen."""
+    from . import invoices
+    from .db import get_setting, set_setting, tx
+    if get_setting(conn, "expense_autofill_v1"):
+        return
+    try:
+        with tx(conn):
+            res = invoices.capture_all(conn, None)
+            set_setting(conn, "expense_autofill_v1", True)
+        logging.getLogger("smartarchive").info("Rechnungen nacherfasst: %s", res)
+    except Exception:  # noqa: BLE001 – Start der App nie blockieren
+        logging.getLogger("smartarchive").exception("Nacherfassung fehlgeschlagen")
 
 
 def _inline_worker() -> None:

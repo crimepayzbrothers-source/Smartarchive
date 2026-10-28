@@ -358,7 +358,7 @@ def decide(conn: sqlite3.Connection, document_id: int, cand: Candidate) -> str:
     audit(conn, "auto_filed" if status == "filed" else "suggested", "document", document_id,
           {"source": cand.source, "confidence": cand.confidence, "blockers": blockers}, actor="system")
     if status == "filed":
-        invoices.ensure_draft_expense(conn, document_id)  # nur Entwurf, Bestätigung durch Sie
+        invoices.ensure_expense(conn, document_id)  # automatisch ausgelesen, als Aufwand erfasst
     return status
 
 

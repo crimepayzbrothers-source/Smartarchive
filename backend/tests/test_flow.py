@@ -90,11 +90,11 @@ def test_digital_invoice_suggestion_accept_and_search(client):
     dup = _upload(client, "nochmal.pdf", pdf_bytes)
     assert dup["created"] == [] and dup["duplicates"][0]["document_id"] == doc_id
 
-    # Übernehmen legt die Ausgabe als Entwurf an (nicht bestätigt, also nicht im Export)
+    # Übernehmen erfasst die Ausgabe automatisch (ausgelesen, gezählt, als „automatisch“ markiert)
     exps = client.get(f"/api/documents/{doc_id}").json()["expenses"]
     assert len(exps) == 1
     e = exps[0]
-    assert (e["amount_cents"], e["status"], e["origin"], e["property_id"]) == (24500, "entwurf", "auto", pid)
+    assert (e["amount_cents"], e["status"], e["origin"], e["property_id"]) == (24500, "bestaetigt", "auto", pid)
     assert e["category_key"] == "heizung" and e["invoice_date"] == "2026-10-27" and e["note"] == "Rechnung Nr. 2026-1041"
     assert e["paid_on"] is None  # „Zahlbar innerhalb …“ ist kein Zahlungsdatum
 
@@ -185,7 +185,8 @@ def test_expenses_summary_issues_and_exports(client):
     client.post("/api/expenses", json={"document_id": doc_id, "amount_cents": 3912, "category_key": "nicht_sofort",
                                        "payee": "Heizungsbau Mueller", "invoice_date": "2026-10-27", "status": "entwurf"}, headers=HEADERS)
     s = client.get("/api/expenses/summary", params={"year": 2026}).json()
-    assert s["total"] == 20588 and s["confirmed"] == 20588 and s["open_payment_count"] == 1
+    # Position ohne Zahlungsdatum zählt nach Rechnungsdatum zum Jahr
+    assert s["total"] == 24500 and s["confirmed"] == 20588 and s["open_payment_count"] == 1
     kinds = {i["kind"] for i in s["issues"]}
     assert "zahlung_offen" in kinds and "anschaffungsnah" in kinds
 

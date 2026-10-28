@@ -253,7 +253,7 @@ def _file_document(conn, document_id: int, chosen_category: int | None, chosen_p
                  "filed_at = COALESCE(filed_at, ?), updated_at = ? WHERE id = ?", (now(), now(), document_id))
     audit(conn, "filed", "document", document_id, {"category_id": d["category_id"], "property_id": d["property_id"]})
     if create_expense:
-        invoices.ensure_draft_expense(conn, document_id, actor="user")
+        invoices.ensure_expense(conn, document_id, actor="user")
 
 
 @endpoint()
@@ -427,7 +427,7 @@ async def assign_invoice(request: Request, conn, user):
                           {"expense_id": expense_id, "betrag": f"{data.amount_cents / 100:.2f}".replace(".", ",") + " €"})
         else:
             # Privat: vom System angelegte Entwürfe gehören nicht mehr zur Vermietung
-            conn.execute("DELETE FROM expenses WHERE document_id = ? AND origin = 'auto' AND status = 'entwurf'", (doc_id,))
+            conn.execute("DELETE FROM expenses WHERE document_id = ? AND origin = 'auto'", (doc_id,))
         documents.index_document(conn, doc_id)
     return detail(conn, doc_id)
 

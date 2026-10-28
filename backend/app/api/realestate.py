@@ -192,10 +192,14 @@ async def update_expense(request: Request, conn, user):
     if not before:
         raise KeyError(eid)
     fields = {k: v for k, v in data.model_dump(exclude_unset=True).items() if before.get(k) != v}
+    if not fields and before["origin"] == "auto":  # „Stimmt“ ohne Änderung: als geprüft markieren
+        with tx(conn):
+            conn.execute("UPDATE expenses SET origin = 'user', updated_at = ? WHERE id = ?", (now(), eid))
+            audit(conn, "checked", "expense", eid, {})
     if fields:
         with tx(conn):
-            conn.execute(f"UPDATE expenses SET {', '.join(k + ' = ?' for k in fields)}, updated_at = ? WHERE id = ?",
-                         (*fields.values(), now(), eid))
+            conn.execute(f"UPDATE expenses SET {', '.join(k + ' = ?' for k in fields)}, origin = CASE WHEN origin = 'auto' "
+                         f"THEN 'user' ELSE origin END, updated_at = ? WHERE id = ?", (*fields.values(), now(), eid))
             audit(conn, "updated", "expense", eid, {k: {"vorher": before.get(k), "nachher": v} for k, v in fields.items()})
     return row(conn.execute("SELECT * FROM expenses WHERE id = ?", (eid,)))
 
@@ -268,7 +272,7 @@ async def missing_expenses(request: Request, conn, user):
 @endpoint()
 async def create_missing_drafts(request: Request, conn, user):
     with tx(conn):
-        return invoices.create_drafts(conn, int_param(request, "year"))
+        return invoices.capture_all(conn, int_param(request, "year"), actor="user")
 
 
 @endpoint()

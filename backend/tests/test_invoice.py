@@ -112,12 +112,13 @@ def test_auto_filed_invoice_gets_draft_and_confirm_reuses_it(client):
     run_worker()
     d = client.get(f"/api/documents/{doc_id}").json()
     assert d["status"] == "filed" and d["confirmed"] == 0 and d["property_id"] == pid
-    assert [(e["status"], e["origin"], e["amount_cents"]) for e in d["expenses"]] == [("entwurf", "auto", 24500)]
+    assert [(e["status"], e["origin"], e["amount_cents"]) for e in d["expenses"]] == [("bestaetigt", "auto", 24500)]
     inbox = client.get("/api/inbox").json()
-    assert inbox["auto_filed"][0]["expenses"][0]["status"] == "entwurf"
+    assert inbox["auto_filed"][0]["expenses"][0]["origin"] == "auto"
 
-    # Entwurf zählt nicht als bestätigt
-    assert client.get("/api/expenses/summary", params={"year": 2026}).json()["confirmed"] == 0
+    # automatisch ausgelesen zählt sofort (ohne Zahlungsdatum nach Rechnungsdatum)
+    s = client.get("/api/expenses/summary", params={"year": 2026}).json()
+    assert s["confirmed"] == 24500 and s["auto_count"] == 1
 
     d = client.post(f"/api/documents/{doc_id}/invoice", json={
         "area": "vermietung", "property_id": pid, "amount_cents": 24500, "expense_category": "heizung",
@@ -160,7 +161,7 @@ def test_scanned_receipt_ocr_detects_invoice(client):
     assert d["expenses"][0]["paid_on"] == "2026-10-20"
 
 
-def test_import_never_creates_expenses(client):
+def test_import_captures_expense_automatically(client):
     from app import documents
     from app.db import connect
 
@@ -174,4 +175,8 @@ def test_import_never_creates_expenses(client):
     conn.close()
     run_worker()
     d = client.get(f"/api/documents/{doc_id}").json()
-    assert d["status"] == "filed" and d["expenses"] == []
+    assert d["status"] == "filed"
+    assert [(e["amount_cents"], e["origin"], e["status"]) for e in d["expenses"]] == [(24500, "auto", "bestaetigt")]
+    # „Stimmt“ ohne Änderung -> geprüft
+    eid = d["expenses"][0]["id"]
+    assert client.patch(f"/api/expenses/{eid}", json={}, headers=HEADERS).json()["origin"] == "user"
