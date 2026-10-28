@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import config, extract, invoices, mistral
+from . import config, extract, invoices, mistral, titles
 from .db import audit, get_setting, now, rows
 from .seed import EXPENSE_KEYS
 
@@ -269,12 +269,9 @@ def analyze(conn: sqlite3.Connection, document_id: int) -> Candidate | None:
         if not corr and p.get("correspondent_id"):
             r = conn.execute("SELECT name FROM correspondents WHERE id = ?", (p["correspondent_id"],)).fetchone()
             corr = r[0] if r else ""
-        parts = [p.get("doc_type") or "", corr]
-        if any(parts) and p.get("doc_date"):
-            parts.append(f"{p['doc_date'][5:7]}/{p['doc_date'][:4]}")
-        title = " ".join(x for x in parts if x).strip()
-        if p.get("doc_type") or corr:
-            p["title"] = title[:80]
+        p["title"] = titles.make_title(text, doc_type=p.get("doc_type"), correspondent=corr or None,
+                                       doc_date=p.get("doc_date"), payee_guess=invoices.guess_payee(text),
+                                       created=doc["created_at"])
     return best
 
 
@@ -327,8 +324,8 @@ def decide(conn: sqlite3.Connection, document_id: int, cand: Candidate) -> str:
         updates["doc_date"] = p["doc_date"]
     if p.get("correspondent_id") and not doc["correspondent_id"]:
         updates["correspondent_id"] = p["correspondent_id"]
-    auto_title = (not doc["title"] or doc["title"] in (doc["original_name"], Path(doc["original_name"] or "").stem)
-                  or doc["title"].startswith("Scan "))
+    # Nur nichtssagende Namen ersetzen (IMG_…, Scan …, document(3)); selbst vergebene Dateinamen bleiben.
+    auto_title = not doc["title"] or titles.is_generic(doc["title"])
     if p.get("title") and auto_title:
         updates["title"] = p["title"]
     if p.get("doc_type") and not doc["doc_type"]:
