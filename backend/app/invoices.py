@@ -12,7 +12,7 @@ import sqlite3
 from typing import Any
 
 from . import extract
-from .db import audit, now, row
+from .db import audit, now, row, rows
 
 INVOICE_TYPES = {"Rechnung", "Kassenbon", "Quittung"}
 
@@ -181,3 +181,63 @@ def ensure_draft_expense(conn: sqlite3.Connection, document_id: int, actor: str 
     audit(conn, "expense_added", "document", document_id,
           {"expense_id": eid, "betrag": f"{values['amount_cents'] / 100:.2f}".replace(".", ",") + " €", "entwurf": True}, actor=actor)
     return eid
+
+
+# --- Nacherfassung -------------------------------------------------------------
+
+_YEARLY_TAX = {"grundsteuer", "grundbesitzabgaben"}
+
+
+def missing_expenses(conn: sqlite3.Connection, year: int | None = None) -> list[dict[str, Any]]:
+    """Abgelegte Rechnungen im Bereich Vermietung ohne Ausgabe, mit Vorschlag aus dem erkannten Text.
+
+    Erfasst auch importierte Dokumente (dort legt der Import bewusst keine Ausgaben an) und Bescheide
+    zu Grundsteuer/Abgaben. Jahr: Rechnungsdatum, sonst Dokumentdatum, sonst Hochladedatum.
+    """
+    docs = rows(conn.execute(
+        "SELECT d.id, d.title, d.doc_type, d.doc_date, d.created_at, d.property_id, d.unit_id, d.source_path, "
+        "p.name AS property_name, c.name AS correspondent_name, t.content FROM documents d "
+        "JOIN areas a ON a.id = d.area_id AND a.key = 'vermietung' "
+        "LEFT JOIN properties p ON p.id = d.property_id LEFT JOIN correspondents c ON c.id = d.correspondent_id "
+        "LEFT JOIN document_text t ON t.document_id = d.id "
+        "WHERE d.deleted_at IS NULL AND d.status = 'filed' AND d.no_expense = 0 "
+        "AND NOT EXISTS (SELECT 1 FROM expenses e WHERE e.document_id = d.id) ORDER BY COALESCE(d.doc_date, d.created_at) DESC"))
+    out = []
+    for d in docs:
+        text = d.pop("content") or ""
+        doc_type = d["doc_type"] or extract.detect_doc_type(text)
+        if doc_type not in INVOICE_TYPES and doc_type != "Bescheid":
+            continue
+        doc_date = d["doc_date"] or extract.detect_date(text)[0]
+        f = fields(text, doc_type, doc_date)
+        if doc_type == "Bescheid" and f.get("expense_category") not in _YEARLY_TAX:
+            continue
+        when = doc_date or d["created_at"][:10]
+        if year and when[:4] != str(year):
+            continue
+        payee = d["correspondent_name"] or f.get("payee") or ""
+        out.append(d | {
+            "doc_type": doc_type, "date": doc_date, "amount_cents": f.get("amount_cents"),
+            "category_key": f.get("expense_category"), "paid_on": f.get("paid_on"), "payee": payee[:120],
+            "note": f"Rechnung Nr. {f['number']}" if f.get("number") else "",
+            "reason": f.get("expense_reason"), "amount_evidence": f.get("amount_evidence"),
+        })
+    return out
+
+
+def create_drafts(conn: sqlite3.Connection, year: int | None) -> dict[str, int]:
+    """Legt für alle gefundenen Rechnungen mit Betrag und Objekt eine Ausgabe als Entwurf an."""
+    made = skipped = 0
+    ts = now()
+    for m in missing_expenses(conn, year):
+        if not m["amount_cents"] or not m["property_id"]:
+            skipped += 1
+            continue
+        eid = conn.execute(
+            "INSERT INTO expenses(document_id, property_id, unit_id, invoice_date, paid_on, amount_cents, payee, category_key, note, "
+            "status, origin, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (m["id"], m["property_id"], m["unit_id"], m["date"], m["paid_on"], m["amount_cents"], m["payee"],
+             m["category_key"] or "sonstige", m["note"], "entwurf", "auto", ts, ts)).lastrowid
+        audit(conn, "expense_added", "document", m["id"], {"expense_id": eid, "nacherfasst": True, "entwurf": True})
+        made += 1
+    return {"created": made, "skipped": skipped}

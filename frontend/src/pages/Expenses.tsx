@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { ApiError, date, get, money, post } from "../api";
+import { ApiError, centsToInput, date, get, money, parseMoney, post } from "../api";
 import { go, useLoad, useMeta, useToast } from "../lib";
 import { Empty, ErrorBox, Icon, Loading } from "../components/ui";
 
@@ -7,14 +7,15 @@ export default function Expenses({ params }: { params: URLSearchParams }) {
   const { meta } = useMeta();
   const [year, setYear] = useState(Number(params.get("jahr")) || new Date().getFullYear());
   const [property, setProperty] = useState<number | null>(params.get("objekt") ? Number(params.get("objekt")) : null);
-  const { data, error, loading } = useLoad(() => Promise.all([
+  const { data, error, loading, reload } = useLoad(() => Promise.all([
     get("/api/expenses/summary", { year, property_id: property }),
     get("/api/expenses", { year, property_id: property }),
     get("/api/expenses", { year, property_id: property, open: 1 }),
+    get("/api/expenses/missing", { year }),
   ]), [year, property]);
   if (loading && !data) return <Loading />;
   if (error) return <ErrorBox text={error} />;
-  const [s, items, openItems] = data as any[];
+  const [s, items, openItems, missing] = data as any[];
   const labels = Object.fromEntries((meta?.expense_categories || []).map((c) => [c.key, c.label]));
   const qs = `year=${year}${property ? `&property_id=${property}` : ""}`;
   const maxCat = Math.max(1, ...s.properties.flatMap((p: any) => p.categories.map((c: any) => c.total)));
@@ -55,6 +56,8 @@ export default function Expenses({ params }: { params: URLSearchParams }) {
         </section>
       )}
 
+      {missing.length > 0 && <MissingPanel items={missing} year={year} onChanged={reload} />}
+
       <BankPanel />
 
       <section className="panel export">
@@ -87,7 +90,8 @@ export default function Expenses({ params }: { params: URLSearchParams }) {
       {openItems.length > 0 && (
         <section className="panel">
           <h2>Ohne Zahlungsdatum ({openItems.length})</h2>
-          <p className="muted">Diese Positionen fehlen im Jahr, bis ein Zahlungsdatum eingetragen ist.</p>
+          <p className="muted">Diese Positionen fehlen im Jahr, bis ein Zahlungsdatum eingetragen ist. Am einfachsten: Umsätze des
+            Mietkontos einlesen – passende Zahlungen tragen das Datum automatisch ein.</p>
           <PositionTable items={openItems} labels={labels} />
         </section>
       )}
@@ -209,5 +213,101 @@ function BankPanel() {
         </>
       )}
     </section>
+  );
+}
+
+// Rechnungen im Bereich Vermietung ohne Ausgabe (z. B. aus dem Dropbox-Import) nachträglich erfassen.
+function MissingPanel({ items, year, onChanged }: { items: any[]; year: number; onChanged: () => void }) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const ready = items.filter((i) => i.amount_cents && i.property_id).length;
+  const bulk = async () => {
+    if (!confirm(`${ready} Rechnung(en) als Entwurf übernehmen? Entwürfe zählen erst nach Ihrer Bestätigung.`)) return;
+    setBusy(true);
+    try {
+      const r = await post(`/api/expenses/missing/drafts?year=${year}`);
+      toast({ kind: "ok", text: `${r.created} Entwürfe angelegt${r.skipped ? `, ${r.skipped} brauchen noch Angaben` : ""}.` });
+      onChanged();
+    } catch (e: any) {
+      toast({ kind: "error", text: e.message });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section className="panel missing">
+      <h2><Icon name="receipt" size={18} /> Rechnungen ohne Ausgabe ({items.length})</h2>
+      <p className="muted">Belege aus {year} im Bereich Vermietung, zu denen noch keine Ausgabe erfasst ist – etwa aus dem Dropbox-Import.
+        Werte sind aus dem Text erkannt; bitte kurz prüfen.</p>
+      {ready > 0 && (
+        <button className="secondary block" disabled={busy} onClick={bulk}>Alle {ready} als Entwurf übernehmen</button>
+      )}
+      <ul className="missing-list">{items.map((i) => <MissingRow key={i.id} item={i} onChanged={onChanged} />)}</ul>
+    </section>
+  );
+}
+
+function MissingRow({ item, onChanged }: { item: any; onChanged: () => void }) {
+  const { meta } = useMeta();
+  const toast = useToast();
+  const [amount, setAmount] = useState(centsToInput(item.amount_cents));
+  const [cat, setCat] = useState<string>(item.category_key || "");
+  const [date, setDate] = useState<string>(item.date || "");
+  const [paid, setPaid] = useState<string>(item.paid_on || "");
+  const [prop, setProp] = useState<number | null>(item.property_id);
+  const [busy, setBusy] = useState(false);
+
+  const save = async () => {
+    const cents = parseMoney(amount);
+    if (!cents || cents <= 0) return toast({ kind: "error", text: "Betrag fehlt oder ist ungültig." });
+    if (!cat) return toast({ kind: "error", text: "Bitte eine Ausgabenkategorie wählen." });
+    if (!prop && meta?.properties.length) return toast({ kind: "error", text: "Bitte ein Mietobjekt wählen." });
+    setBusy(true);
+    try {
+      await post("/api/expenses", { document_id: item.id, property_id: prop, unit_id: item.unit_id, amount_cents: cents,
+        category_key: cat, invoice_date: date || null, paid_on: paid || null, payee: item.payee, note: item.note, status: "bestaetigt" });
+      toast({ kind: "ok", text: "Ausgabe erfasst." });
+      onChanged();
+    } catch (e: any) {
+      toast({ kind: "error", text: e.message });
+    } finally {
+      setBusy(false);
+    }
+  };
+  const dismiss = async () => {
+    await post(`/api/documents/${item.id}/no-expense`);
+    toast({ kind: "ok", text: "Ausgeblendet – keine Ausgabe." });
+    onChanged();
+  };
+
+  return (
+    <li className="missing-row">
+      <a href={`#/dokument/${item.id}`} className="missing-title">{item.title || "Ohne Titel"}</a>
+      <span className="muted small">{item.payee || "Aussteller unbekannt"}{item.property_name ? ` · ${item.property_name}` : ""}
+        {item.amount_evidence ? ` · erkannt: „${item.amount_evidence}“` : ""}</span>
+      <div className="form grid">
+        <label>Betrag (€)<input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0,00" /></label>
+        <label>Kategorie
+          <select value={cat} onChange={(e) => setCat(e.target.value)}>
+            <option value="">– wählen –</option>
+            {meta?.expense_categories.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+          </select>
+        </label>
+        <label>Rechnungsdatum<input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>
+        <label>Bezahlt am<input type="date" value={paid} onChange={(e) => setPaid(e.target.value)} /></label>
+        {!item.property_id && (
+          <label className="span2">Mietobjekt
+            <select value={prop ?? ""} onChange={(e) => setProp(e.target.value ? Number(e.target.value) : null)}>
+              <option value="">– wählen –</option>
+              {meta?.properties.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </label>
+        )}
+      </div>
+      <div className="row-actions">
+        <button className="primary" disabled={busy} onClick={save}><Icon name="check" size={18} /> Erfassen</button>
+        <button className="ghost" disabled={busy} onClick={dismiss}>Keine Ausgabe</button>
+      </div>
+    </li>
   );
 }

@@ -292,6 +292,10 @@ MIGRATIONS: list[str] = [
     CREATE INDEX ix_tx_status ON transactions(status, booking_date);
     CREATE INDEX ix_tx_party ON transactions(party_key, status);
     """,
+    # 5 – Rechnung bewusst ohne Ausgabe (z. B. Angebot, Doppel, privat bezahlt)
+    """
+    ALTER TABLE documents ADD COLUMN no_expense INTEGER NOT NULL DEFAULT 0;
+    """,
 ]
 
 

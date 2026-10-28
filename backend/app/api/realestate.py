@@ -12,7 +12,7 @@ from starlette.background import BackgroundTask
 from starlette.responses import FileResponse, Response
 from starlette.routing import Route
 
-from .. import config, exports
+from .. import config, exports, invoices
 from ..db import audit, now, row, rows, tx
 from ..seed import EXPENSE_KEYS
 from .common import ApiError, body, endpoint, int_param, path_int
@@ -260,7 +260,30 @@ async def export_archive(request: Request, conn, user):
                         background=BackgroundTask(os.unlink, tmp))
 
 
+@endpoint()
+async def missing_expenses(request: Request, conn, user):
+    return invoices.missing_expenses(conn, int_param(request, "year"))
+
+
+@endpoint()
+async def create_missing_drafts(request: Request, conn, user):
+    with tx(conn):
+        return invoices.create_drafts(conn, int_param(request, "year"))
+
+
+@endpoint()
+async def set_no_expense(request: Request, conn, user):
+    doc_id = path_int(request)
+    with tx(conn):
+        conn.execute("UPDATE documents SET no_expense = 1, updated_at = ? WHERE id = ?", (now(), doc_id))
+        audit(conn, "no_expense", "document", doc_id)
+    return {"ok": True}
+
+
 routes = [
+    Route("/api/expenses/missing", missing_expenses, methods=["GET"]),
+    Route("/api/expenses/missing/drafts", create_missing_drafts, methods=["POST"]),
+    Route("/api/documents/{id:int}/no-expense", set_no_expense, methods=["POST"]),
     Route("/api/properties", list_properties, methods=["GET"]),
     Route("/api/properties", create_property, methods=["POST"]),
     Route("/api/properties/{id:int}", get_property, methods=["GET"]),
