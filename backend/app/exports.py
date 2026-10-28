@@ -27,7 +27,8 @@ def euro(cents: int | None) -> str:
     return ("-" if cents < 0 else "") + s + " €"
 
 
-YEAR_DATE = "COALESCE(e.paid_on, e.invoice_date, d.doc_date, substr(e.created_at, 1, 10))"
+# Kein Ersatz durch das Hochladedatum: Ohne Datum gehört eine Position zu keinem Jahr („Ohne Datum“).
+YEAR_DATE = "COALESCE(e.paid_on, e.invoice_date, d.doc_date)"
 ORIGIN_LABEL = {"auto": "automatisch ausgelesen", "user": "geprüft", "bank": "aus Kontoumsatz"}
 
 
@@ -41,7 +42,7 @@ def expense_rows(conn: sqlite3.Connection, year: int | None = None, property_id:
     if open_payment:
         where.append("e.paid_on IS NULL")
         if year:
-            where.append("substr(COALESCE(e.invoice_date, d.doc_date, e.created_at), 1, 4) = ?")
+            where.append("substr(COALESCE(e.invoice_date, d.doc_date), 1, 4) = ?")
             params.append(str(year))
     elif year:
         # Jahr nach Zahlungsdatum; fehlt es, nach Rechnungs-/Dokumentdatum (Spalte „Jahr nach“ im Export)
@@ -60,13 +61,22 @@ def expense_rows(conn: sqlite3.Connection, year: int | None = None, property_id:
         " ORDER BY p.name, e.paid_on, e.id", params))
 
 
+def undated_rows(conn: sqlite3.Connection, property_id: int | None = None) -> list[dict[str, Any]]:
+    """Positionen ohne jedes Datum – keinem Jahr zugeordnet, bitte Rechnungs- oder Zahlungsdatum ergänzen."""
+    return rows(conn.execute(
+        "SELECT e.*, p.name AS property_name, d.title AS document_title FROM expenses e "
+        "LEFT JOIN properties p ON p.id = e.property_id LEFT JOIN documents d ON d.id = e.document_id "
+        f"WHERE {YEAR_DATE} IS NULL" + (" AND e.property_id = ?" if property_id else "") + " ORDER BY e.id",
+        [property_id] if property_id else []))
+
+
 def find_issues(conn: sqlite3.Connection, year: int | None = None) -> list[dict[str, Any]]:
     """Prüfhinweise – keine steuerliche Wertung, nur Auffälligkeiten."""
     issues: list[dict[str, Any]] = []
     cond = "1=1"
     params: list[Any] = []
     if year:
-        cond = "substr(COALESCE(e.paid_on, e.invoice_date, e.created_at), 1, 4) = ?"
+        cond = f"substr({YEAR_DATE}, 1, 4) = ?"
         params = [str(year)]
     for e in rows(conn.execute(f"SELECT e.*, d.title AS document_title FROM expenses e LEFT JOIN documents d ON d.id = e.document_id WHERE {cond}", params)):
         label = e["payee"] or e["document_title"] or f"Position {e['id']}"
@@ -141,6 +151,7 @@ def summary(conn: sqlite3.Connection, year: int, property_id: int | None = None)
         "non_deductible": sum(e["amount_cents"] for e in items if not DEDUCTIBLE.get(e["category_key"], True)),
         "previous_year_total": prev,
         "open_payment_count": len(open_items),
+        "undated": undated_rows(conn, property_id),
         "auto_count": sum(1 for e in items if e["origin"] == "auto"),
         "auto_total": sum(e["amount_cents"] for e in items if e["origin"] == "auto"),
         "properties": props,

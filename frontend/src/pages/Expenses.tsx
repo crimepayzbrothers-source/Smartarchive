@@ -59,6 +59,15 @@ export default function Expenses({ params }: { params: URLSearchParams }) {
 
       {missing.length > 0 && <MissingPanel items={missing} year={year} onChanged={reload} />}
 
+      {s.undated.length > 0 && (
+        <section className="panel missing">
+          <h2><Icon name="alert" size={18} /> Ohne Datum ({s.undated.length})</h2>
+          <p className="muted">Im Beleg war kein Datum lesbar. Diese Positionen zählen zu keinem Jahr, bis Sie am Beleg ein
+            Rechnungs- oder Zahlungsdatum eintragen (Position antippen).</p>
+          <PositionTable items={s.undated} labels={labels} />
+        </section>
+      )}
+
       <BankPanel />
 
       <section className="panel export">

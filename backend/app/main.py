@@ -31,6 +31,7 @@ def init_db() -> None:
         migrate(conn)
         seed(conn)
         _autofill_expenses(conn)
+        _fix_dates(conn)
     finally:
         conn.close()
 
@@ -138,3 +139,18 @@ app = Starlette(routes=routes, lifespan=lifespan, middleware=[Middleware(Securit
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
+
+
+def _fix_dates(conn) -> None:
+    """Einmalig: Datum für Positionen ohne Datum aus Text/Dateinamen ergänzen (vorher galt das Hochladedatum)."""
+    from . import invoices
+    from .db import get_setting, set_setting, tx
+    if get_setting(conn, "expense_dates_v1"):
+        return
+    try:
+        with tx(conn):
+            n = invoices.fix_missing_dates(conn)
+            set_setting(conn, "expense_dates_v1", True)
+        logging.getLogger("smartarchive").info("Datum ergänzt bei %s Positionen", n)
+    except Exception:  # noqa: BLE001
+        logging.getLogger("smartarchive").exception("Datumskorrektur fehlgeschlagen")

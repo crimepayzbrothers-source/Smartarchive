@@ -142,7 +142,7 @@ def _latest_payload(conn: sqlite3.Connection, document_id: int) -> dict[str, Any
 _YEARLY_TAX = {"grundsteuer", "grundbesitzabgaben"}
 
 _DOC_SELECT = (
-    "SELECT d.id, d.title, d.doc_type, d.doc_date, d.created_at, d.property_id, d.unit_id, d.source_path, d.status, "
+    "SELECT d.id, d.title, d.doc_type, d.doc_date, d.created_at, d.property_id, d.unit_id, d.source_path, d.original_name, d.status, "
     "d.deleted_at, d.no_expense, a.key AS area_key, p.name AS property_name, c.name AS correspondent_name, t.content "
     "FROM documents d LEFT JOIN areas a ON a.id = d.area_id LEFT JOIN properties p ON p.id = d.property_id "
     "LEFT JOIN correspondents c ON c.id = d.correspondent_id LEFT JOIN document_text t ON t.document_id = d.id"
@@ -157,7 +157,8 @@ def _proposal(conn: sqlite3.Connection, d: dict[str, Any]) -> dict[str, Any] | N
     doc_type = d["doc_type"] or payload.get("doc_type") or extract.detect_doc_type(text)
     if doc_type not in INVOICE_TYPES and doc_type != "Bescheid":
         return None
-    doc_date = d["doc_date"] or payload.get("doc_date") or extract.detect_date(text)[0]
+    doc_date = (d["doc_date"] or payload.get("doc_date") or extract.detect_date(text)[0]
+                or extract.date_from_name(d.get("original_name"), d.get("source_path")))
     f = fields(text, doc_type, doc_date)
     f.update({k: v for k, v in inv.items() if v})  # Vorschlag aus der Einordnung (ggf. KI) hat Vorrang
     if doc_type == "Bescheid" and f.get("expense_category") not in _YEARLY_TAX:
@@ -218,8 +219,8 @@ def missing_expenses(conn: sqlite3.Connection, year: int | None = None) -> list[
         d.pop("content", None)
         if not prop:
             continue
-        when = prop["date"] or d["created_at"][:10]
-        if year and when[:4] != str(year):
+        # ohne Datum: in jedem Jahr anzeigen (muss ergänzt werden), nie stillschweigend dem Hochladejahr zuordnen
+        if year and prop["date"] and prop["date"][:4] != str(year):
             continue
         out.append(d | prop)
     return out
@@ -238,3 +239,17 @@ def capture_all(conn: sqlite3.Connection, year: int | None = None, actor: str = 
 
 
 create_drafts = capture_all
+
+
+def fix_missing_dates(conn: sqlite3.Connection) -> int:
+    """Ergänzt das Rechnungsdatum automatisch erfasster Positionen ohne Datum aus Text bzw. Dateinamen."""
+    fixed = 0
+    for e in rows(conn.execute(
+            "SELECT e.id, e.document_id FROM expenses e JOIN documents d ON d.id = e.document_id "
+            "WHERE e.invoice_date IS NULL AND e.paid_on IS NULL AND d.doc_date IS NULL")):
+        d = row(conn.execute(_DOC_SELECT + " WHERE d.id = ?", (e["document_id"],)))
+        when = extract.detect_date(d.get("content") or "")[0] or extract.date_from_name(d.get("original_name"), d.get("source_path"))
+        if when:
+            conn.execute("UPDATE expenses SET invoice_date = ?, updated_at = ? WHERE id = ?", (when, now(), e["id"]))
+            fixed += 1
+    return fixed

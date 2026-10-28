@@ -191,3 +191,25 @@ def keyword_scores(text: str, categories: list[dict]) -> list[tuple[dict, int, l
             scored.append((c, len(matched), matched))
     scored.sort(key=lambda x: (-x[1], x[0].get("depth", 0) * -1))
     return scored
+
+
+_NAME_DATES = [
+    re.compile(r"(?<!\d)((?:19|20)\d{2})[-_.]?(0[1-9]|1[0-2])[-_.]?(0[1-9]|[12]\d|3[01])(?!\d)"),  # 2023-05-12, 20230512
+    re.compile(r"(?<!\d)(0?[1-9]|[12]\d|3[01])\.(0?[1-9]|1[0-2])\.((?:19|20)\d{2})(?!\d)"),          # 12.05.2023
+]
+
+
+def date_from_name(*names: str | None) -> str | None:
+    """Datum aus Datei- oder Ordnernamen (z. B. „IMG_20230512_1205.jpg“, „2023-05-12 Rechnung.pdf“)."""
+    for name in names:
+        if not name:
+            continue
+        for i, pat in enumerate(_NAME_DATES):
+            m = pat.search(name)
+            if not m:
+                continue
+            y, mo, d = (m.group(1), m.group(2), m.group(3)) if i == 0 else (m.group(3), m.group(2), m.group(1))
+            dt = _valid(int(y), int(mo), int(d))
+            if dt:
+                return dt.isoformat()
+    return None
