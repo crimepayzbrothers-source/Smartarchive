@@ -407,3 +407,18 @@ table.positions { width: 100%; border-collapse: collapse; font-size: .9rem; }
 .toast.error { background: var(--danger); color: #fff; }
 .toast .link { color: inherit; text-decoration: underline; }
 .filing > .block, .panel > .form + .block { margin-top: 1rem; }
+
+/* --- Öffnen/Teilen und Rechnungs-Abfrage ------------------------------------ */
+.open-share { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+.open-share > .button, .open-share > button { flex: 1 1 140px; }
+.open-share .hint { flex-basis: 100%; margin: 0; }
+.suggestion.invoice { border-color: color-mix(in srgb, var(--ochre) 35%, transparent); background: color-mix(in srgb, var(--ochre-soft) 55%, var(--surface)); }
+.suggestion.invoice.applied { background: var(--vermietung-soft); border-color: color-mix(in srgb, var(--vermietung) 30%, transparent); }
+.invoice-question { font: 640 1rem/1.35 var(--font); color: var(--ink); }
+.choice-chips { display: flex; flex-wrap: wrap; gap: .45rem; }
+.choice { min-height: 44px; padding: .45rem .9rem; border-radius: 99px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); font-weight: 560; font-size: .92rem; }
+.choice.vermietung.on { border-color: var(--vermietung); background: var(--vermietung-soft); box-shadow: inset 0 0 0 1px var(--vermietung); }
+.choice.privat.on { border-color: var(--privat); background: var(--privat-soft); box-shadow: inset 0 0 0 1px var(--privat); }
+.invoice-form { margin-top: .3rem; }
+.suggestion .muted.small { font-size: .8rem; }
+.collapsible > .panel { border: 0; box-shadow: none; padding: .75rem 0 0; background: none; }

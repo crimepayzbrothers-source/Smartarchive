@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { centsToInput, date, del, get, money, parseMoney, patch, post, relative } from "../api";
 import { go, useLoad, useMeta, usePoll, useToast } from "../lib";
 import { SuggestionBox } from "../components/Suggestion";
+import { InvoiceCard, needsInvoiceCard } from "../components/InvoiceCard";
 import { AreaBadge, BackButton, CategorySelect, ErrorBox, Icon, Loading, sourceLabel } from "../components/ui";
 
 const ACTION_LABEL: Record<string, string> = {
@@ -30,6 +31,7 @@ export default function DocumentPage({ id }: { id: number }) {
   if (!doc || !meta) return <Loading />;
 
   const pages = doc.page_count || 1;
+  const invoiceCard = needsInvoiceCard(doc);
   const toggleFav = async () => { await patch(`/api/documents/${id}`, { favorite: !doc.favorite }); reload(); };
   const remove = async () => {
     if (!confirm("Dokument in den Papierkorb legen? Es bleibt wiederherstellbar.")) return;
@@ -78,8 +80,8 @@ export default function DocumentPage({ id }: { id: number }) {
               )}
             </>
           ) : <div className="preview-placeholder"><Icon name="file" size={32} /><p>Keine Vorschau</p></div>}
+          {doc.has_pdf && doc.status !== "processing" && <FileActions doc={doc} />}
           <div className="file-actions">
-            <a className="secondary button" href={`/api/documents/${id}/file?download=1`}><Icon name="down" size={18} /> {doc.display_filename}</a>
             {doc.files.filter((f: any) => f.role === "original").map((f: any) => (
               <a key={f.id} className="ghost button small" href={`/api/documents/${id}/file?variant=original&position=${f.position}&download=1`}>
                 Original {f.original_name ? `„${f.original_name}“` : ""} ({Math.round(f.size / 1024)} KB)
@@ -95,8 +97,9 @@ export default function DocumentPage({ id }: { id: number }) {
               <button className="secondary" onClick={() => rerun("process")}>Erneut versuchen</button>
             </div>
           )}
-          {doc.status === "inbox" && !doc.suggestion?.labels?.category && <div className="notice attention">Im Eingang – bitte unten eine Ablage wählen.</div>}
-          {doc.suggestion && doc.status !== "processing" && (doc.suggestion.status === "open" || doc.suggestion.status === "applied" || doc.suggestion.status === "info") && !(doc.confirmed && doc.status === "filed") && (
+          {doc.status === "inbox" && !invoiceCard && !doc.suggestion?.labels?.category && <div className="notice attention">Im Eingang – bitte unten eine Ablage wählen.</div>}
+          {invoiceCard && <InvoiceCard doc={doc} onChanged={reload} />}
+          {!invoiceCard && doc.suggestion && doc.status !== "processing" && (doc.suggestion.status === "open" || doc.suggestion.status === "applied" || doc.suggestion.status === "info") && !(doc.confirmed && doc.status === "filed") && (
             <SuggestionBox docId={id} status={doc.status} suggestion={doc.suggestion} onChanged={reload} />
           )}
           {doc.source_path && <p className="hint">Aus Dropbox übernommen: /{doc.source_path}</p>}
@@ -104,9 +107,14 @@ export default function DocumentPage({ id }: { id: number }) {
             <p className="hint">Abgelegt durch {sourceLabel(doc.filed_by)}, von Ihnen bestätigt.</p>
           )}
 
-          <FilingForm key={doc.updated_at} doc={doc} onSaved={reload} />
+          {invoiceCard ? (
+            <details className="panel collapsible">
+              <summary>Weitere Angaben (Titel, Absender, Tags)</summary>
+              <FilingForm key={doc.updated_at} doc={doc} onSaved={reload} />
+            </details>
+          ) : <FilingForm key={doc.updated_at} doc={doc} onSaved={reload} />}
 
-          {doc.area_key === "vermietung" && <Expenses doc={doc} onChanged={reload} />}
+          {doc.area_key === "vermietung" && !invoiceCard && <Expenses doc={doc} onChanged={reload} />}
 
           <details className="panel collapsible" open={showText} onToggle={(e) => setShowText((e.target as HTMLDetailsElement).open)}>
             <summary>Erkannter Text {doc.text_source === "ocr" ? "(Texterkennung)" : doc.text_source === "digital" ? "(digital)" : ""}</summary>
@@ -134,6 +142,62 @@ export default function DocumentPage({ id }: { id: number }) {
           <button className="danger-link" onClick={remove}><Icon name="trash" size={18} /> In den Papierkorb</button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// Öffnen in der PDF-App des Geräts und Teilen über das System-Menü (Web Share API).
+function FileActions({ doc }: { doc: any }) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const [ready, setReady] = useState<File | null>(null);
+  const url = `/api/documents/${doc.id}/file`;
+  const shareSupported = typeof navigator !== "undefined" && typeof navigator.canShare === "function";
+
+  const loadFile = async () => {
+    const res = await fetch(url, { credentials: "same-origin" });
+    if (!res.ok) throw new Error(res.status === 401 ? "Bitte neu anmelden." : `Datei nicht abrufbar (Fehler ${res.status}).`);
+    return new File([await res.blob()], doc.display_filename, { type: "application/pdf" });
+  };
+
+  const share = async () => {
+    setBusy(true);
+    try {
+      const file = ready || await loadFile();
+      if (!navigator.canShare({ files: [file] })) {
+        toast({ kind: "error", text: "Dieses Gerät kann die Datei nicht teilen. Bitte „Öffnen“ nutzen." });
+        return;
+      }
+      try {
+        await navigator.share({ files: [file], title: doc.title || doc.display_filename });
+        setReady(null);
+      } catch (e: any) {
+        if (e?.name === "AbortError") return;          // Teilen abgebrochen
+        if (e?.name === "NotAllowedError") {           // Laden hat zu lange gedauert
+          setReady(file);
+          toast({ kind: "ok", text: "Datei ist bereit – bitte noch einmal auf „Teilen“ tippen." });
+          return;
+        }
+        throw e;
+      }
+    } catch (e: any) {
+      toast({ kind: "error", text: e?.message || "Teilen fehlgeschlagen." });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="open-share">
+      <a className="primary button" href={`${url}?download=1`} download={doc.display_filename}>
+        <Icon name="open" size={18} /> Öffnen
+      </a>
+      {shareSupported && (
+        <button className={ready ? "primary" : "secondary"} disabled={busy} onClick={share}>
+          <Icon name="share" size={18} /> {busy ? "Wird geladen …" : ready ? "Jetzt teilen" : "Teilen"}
+        </button>
+      )}
+      <p className="hint">„Öffnen“ lädt die PDF herunter; Android öffnet sie dann mit Ihrer PDF-App.</p>
     </div>
   );
 }

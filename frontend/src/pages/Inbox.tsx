@@ -1,6 +1,7 @@
 import { get, post } from "../api";
 import { useLoad, usePoll, useToast } from "../lib";
 import { SuggestionBox } from "../components/Suggestion";
+import { InvoiceCard, needsInvoiceCard } from "../components/InvoiceCard";
 import { DocRow, Empty, ErrorBox, Icon, Loading } from "../components/ui";
 
 export default function Inbox({ onCapture }: { onCapture: () => void }) {
@@ -67,8 +68,10 @@ export default function Inbox({ onCapture }: { onCapture: () => void }) {
           <div className="doc-list">
             {open.map((d: any) => (
               <DocRow key={d.id} doc={d}>
-                <SuggestionBox docId={d.id} status={d.status} suggestion={d.suggestion} onChanged={reload} compact />
-                {!d.suggestion?.labels?.category && (
+                {needsInvoiceCard(d) ? <InvoiceCard doc={d} onChanged={reload} compact /> : (
+                  <SuggestionBox docId={d.id} status={d.status} suggestion={d.suggestion} onChanged={reload} compact />
+                )}
+                {!needsInvoiceCard(d) && !d.suggestion?.labels?.category && (
                   <div className="row-extra"><a className="secondary button" href={`#/dokument/${d.id}`}>Ablage wählen</a></div>
                 )}
               </DocRow>
@@ -84,7 +87,9 @@ export default function Inbox({ onCapture }: { onCapture: () => void }) {
           <div className="doc-list">
             {auto.map((d: any) => (
               <DocRow key={d.id} doc={d}>
-                <SuggestionBox docId={d.id} status={d.status} suggestion={d.suggestion} onChanged={reload} compact />
+                {needsInvoiceCard(d) ? <InvoiceCard doc={d} onChanged={reload} compact /> : (
+                  <SuggestionBox docId={d.id} status={d.status} suggestion={d.suggestion} onChanged={reload} compact />
+                )}
               </DocRow>
             ))}
           </div>

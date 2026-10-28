@@ -10,9 +10,10 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, Response
 from starlette.routing import Route
 
-from .. import config, documents, ocr, search, storage
+from .. import config, documents, invoices, ocr, search, storage
 from ..classify import category_paths, get_or_create_correspondent
 from ..db import audit, now, row, rows, tx
+from ..seed import EXPENSE_KEYS
 from .common import ApiError, body, endpoint, int_param, path_int
 
 LIST_SELECT = (
@@ -179,6 +180,7 @@ async def inbox(request: Request, conn, user):
                              "AND d.filed_by IS NOT NULL AND d.filed_by != 'user' ORDER BY d.filed_at DESC LIMIT 50"))
     for item in pending + auto:
         item["suggestion"] = _suggestion(conn, item["id"])
+        item["expenses"] = rows(conn.execute("SELECT * FROM expenses WHERE document_id = ? ORDER BY id", (item["id"],)))
     return {"pending": _decorate(conn, pending), "auto_filed": _decorate(conn, auto)}
 
 
@@ -221,7 +223,8 @@ def _set_tags(conn, document_id: int, tags: list[str]) -> None:
         conn.execute("INSERT OR IGNORE INTO document_tags(document_id, tag_id) VALUES(?,?)", (document_id, tag_id))
 
 
-def _file_document(conn, document_id: int, chosen_category: int | None, chosen_property: int | None) -> None:
+def _file_document(conn, document_id: int, chosen_category: int | None, chosen_property: int | None,
+                   create_expense: bool = True) -> None:
     """Ablage durch den Nutzer: bestätigt, Korrektur gegenüber Vorschlag merken."""
     d = row(conn.execute("SELECT * FROM documents WHERE id = ?", (document_id,)))
     if not d["category_id"]:
@@ -241,6 +244,8 @@ def _file_document(conn, document_id: int, chosen_category: int | None, chosen_p
     conn.execute("UPDATE documents SET status = 'filed', confirmed = 1, filed_by = COALESCE(CASE WHEN status = 'filed' THEN filed_by END, 'user'), "
                  "filed_at = COALESCE(filed_at, ?), updated_at = ? WHERE id = ?", (now(), now(), document_id))
     audit(conn, "filed", "document", document_id, {"category_id": d["category_id"], "property_id": d["property_id"]})
+    if create_expense:
+        invoices.ensure_draft_expense(conn, document_id, actor="user")
 
 
 @endpoint()
@@ -303,6 +308,118 @@ async def accept_suggestion(request: Request, conn, user):
             fields["correspondent_id"] = get_or_create_correspondent(conn, p["correspondent_name"])
         documents.apply_fields(conn, doc_id, fields)
         _file_document(conn, doc_id, p.get("category_id"), p.get("property_id"))
+        documents.index_document(conn, doc_id)
+    return detail(conn, doc_id)
+
+
+class InvoiceAssign(BaseModel):
+    area: str = Field(pattern=r"^(privat|vermietung)$")
+    property_id: int | None = None
+    unit_id: int | None = None
+    category_id: int | None = None
+    amount_cents: int | None = Field(default=None, gt=0, lt=100_000_000_00)
+    expense_category: str | None = None
+    invoice_date: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$|^$")
+    paid_on: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$|^$")
+    payee: str | None = Field(default=None, max_length=120)
+    note: str | None = Field(default=None, max_length=1000)
+
+
+def _default_category(conn, area_key: str, suggested: int | None) -> int:
+    """Vorgeschlagene Kategorie, wenn sie im gewählten Bereich liegt, sonst der Standardordner des Bereichs."""
+    if suggested:
+        r = conn.execute("SELECT 1 FROM categories c JOIN areas a ON a.id = c.area_id WHERE c.id = ? AND a.key = ?",
+                         (suggested, area_key)).fetchone()
+        if r:
+            return suggested
+    name = "Rechnungen und Belege" if area_key == "vermietung" else "Sonstiges"
+    r = conn.execute("SELECT c.id FROM categories c JOIN areas a ON a.id = c.area_id WHERE a.key = ? AND c.parent_id IS NULL "
+                     "ORDER BY c.name = ? DESC, c.name = 'Sonstiges' DESC, c.sort LIMIT 1", (area_key, name)).fetchone()
+    if not r:
+        raise ApiError(400, "Im Bereich gibt es keinen Ordner.")
+    return r[0]
+
+
+@endpoint()
+async def assign_invoice(request: Request, conn, user):
+    """Antwort auf die Rechnungs-Abfrage: Bereich/Objekt wählen, ablegen, Ausgabe bestätigt erfassen."""
+    doc_id = path_int(request)
+    data = await body(request, InvoiceAssign)
+    d = row(conn.execute("SELECT * FROM documents WHERE id = ? AND deleted_at IS NULL", (doc_id,)))
+    if not d:
+        raise KeyError(doc_id)
+    if d["status"] == "processing":
+        raise ApiError(409, "Das Dokument wird noch verarbeitet.")
+    if data.expense_category and data.expense_category not in EXPENSE_KEYS:
+        raise ApiError(400, "Unbekannte Ausgabenkategorie.")
+    area_id = conn.execute("SELECT id FROM areas WHERE key = ?", (data.area,)).fetchone()[0]
+    rental = data.area == "vermietung"
+    property_id = unit_id = None
+    if rental:
+        has_props = conn.execute("SELECT COUNT(*) FROM properties WHERE archived = 0").fetchone()[0] > 0
+        if data.property_id:
+            if not conn.execute("SELECT 1 FROM properties WHERE id = ?", (data.property_id,)).fetchone():
+                raise ApiError(400, "Mietobjekt existiert nicht.")
+            property_id = data.property_id
+        elif has_props:
+            raise ApiError(400, "Bitte ein Mietobjekt wählen.")
+        if data.unit_id:
+            if not conn.execute("SELECT 1 FROM units WHERE id = ? AND property_id = ?", (data.unit_id, property_id)).fetchone():
+                raise ApiError(400, "Die Einheit gehört nicht zu diesem Objekt.")
+            unit_id = data.unit_id
+    s = row(conn.execute("SELECT payload FROM suggestions WHERE document_id = ? AND status != 'superseded' ORDER BY id DESC LIMIT 1",
+                         (doc_id,)))
+    payload = json.loads(s["payload"]) if s else {}
+    if data.category_id:
+        cat = conn.execute("SELECT c.area_id FROM categories c WHERE c.id = ?", (data.category_id,)).fetchone()
+        if not cat or cat[0] != area_id:
+            raise ApiError(400, "Der Ordner passt nicht zum gewählten Bereich.")
+        category_id = data.category_id
+    else:
+        category_id = _default_category(conn, data.area, d["category_id"] or payload.get("category_id"))
+
+    with tx(conn):
+        if d["status"] == "filed" and d["area_id"] and d["area_id"] != area_id:
+            audit(conn, "area_changed", "document", doc_id, {"vorher": d["area_id"], "nachher": area_id})
+        fields: dict[str, Any] = {"area_id": area_id, "category_id": category_id, "property_id": property_id, "unit_id": unit_id}
+        for key in ("doc_date", "doc_type"):
+            if payload.get(key) and not d[key]:
+                fields[key] = payload[key]
+        if data.invoice_date and not d["doc_date"]:
+            fields["doc_date"] = data.invoice_date
+        if data.payee and data.payee.strip() and not d["correspondent_id"]:
+            fields["correspondent_id"] = get_or_create_correspondent(conn, data.payee)
+        documents.apply_fields(conn, doc_id, fields)
+        _file_document(conn, doc_id, category_id, property_id, create_expense=False)
+
+        expense_id = None
+        if rental:
+            if data.amount_cents and data.expense_category:
+                values = {"property_id": property_id, "unit_id": unit_id, "amount_cents": data.amount_cents,
+                          "category_key": data.expense_category, "invoice_date": data.invoice_date or None,
+                          "paid_on": data.paid_on or None, "payee": (data.payee or "").strip(),
+                          "note": (data.note or "").strip(), "status": "bestaetigt"}
+                drafts = rows(conn.execute("SELECT id FROM expenses WHERE document_id = ? AND origin = 'auto' ORDER BY id", (doc_id,)))
+                others = conn.execute("SELECT COUNT(*) FROM expenses WHERE document_id = ? AND origin != 'auto'", (doc_id,)).fetchone()[0]
+                ts = now()
+                if len(drafts) == 1:
+                    expense_id = drafts[0]["id"]
+                    sets = ", ".join(f"{k} = ?" for k in values)
+                    conn.execute(f"UPDATE expenses SET {sets}, origin = 'user', updated_at = ? WHERE id = ?",
+                                 (*values.values(), ts, expense_id))
+                    audit(conn, "updated", "expense", expense_id, {"bestaetigt": True})
+                elif not drafts and not others:
+                    cols = ["document_id", *values, "origin", "created_at", "updated_at"]
+                    expense_id = conn.execute(
+                        f"INSERT INTO expenses({', '.join(cols)}) VALUES({', '.join('?' * len(cols))})",
+                        (doc_id, *values.values(), "user", ts, ts)).lastrowid
+                    audit(conn, "created", "expense", expense_id, values)
+                if expense_id:
+                    audit(conn, "expense_added", "document", doc_id,
+                          {"expense_id": expense_id, "betrag": f"{data.amount_cents / 100:.2f}".replace(".", ",") + " €"})
+        else:
+            # Privat: vom System angelegte Entwürfe gehören nicht mehr zur Vermietung
+            conn.execute("DELETE FROM expenses WHERE document_id = ? AND origin = 'auto' AND status = 'entwurf'", (doc_id,))
         documents.index_document(conn, doc_id)
     return detail(conn, doc_id)
 
@@ -415,6 +532,7 @@ routes = [
     Route("/api/documents/{id:int}/text", get_text, methods=["GET"]),
     Route("/api/documents/{id:int}/accept", accept_suggestion, methods=["POST"]),
     Route("/api/documents/{id:int}/undo", undo_auto, methods=["POST"]),
+    Route("/api/documents/{id:int}/invoice", assign_invoice, methods=["POST"]),
     Route("/api/documents/{id:int}/restore", restore_document, methods=["POST"]),
     Route("/api/documents/{id:int}/run/{kind}", reprocess, methods=["POST"]),
     Route("/api/documents/{id:int}/file", get_file, methods=["GET"]),

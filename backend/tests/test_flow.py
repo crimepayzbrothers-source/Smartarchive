@@ -90,9 +90,15 @@ def test_digital_invoice_suggestion_accept_and_search(client):
     dup = _upload(client, "nochmal.pdf", pdf_bytes)
     assert dup["created"] == [] and dup["duplicates"][0]["document_id"] == doc_id
 
+    # Übernehmen legt die Ausgabe als Entwurf an (nicht bestätigt, also nicht im Export)
+    exps = client.get(f"/api/documents/{doc_id}").json()["expenses"]
+    assert len(exps) == 1
+    e = exps[0]
+    assert (e["amount_cents"], e["status"], e["origin"], e["property_id"]) == (24500, "entwurf", "auto", pid)
+    assert e["category_key"] == "heizung" and e["invoice_date"] == "2026-10-27" and e["note"] == "Rechnung Nr. 2026-1041"
+    assert e["paid_on"] is None  # „Zahlbar innerhalb …“ ist kein Zahlungsdatum
+
     # sprechender Dateiname (Original bleibt unverändert)
-    client.post("/api/expenses", json={"document_id": doc_id, "amount_cents": 24500, "category_key": "erhaltung_sofort",
-                                       "payee": "Heizungsbau Mueller", "invoice_date": "2026-10-27"}, headers=HEADERS)
     name = client.get(f"/api/documents/{doc_id}").json()["display_filename"]
     assert name.startswith("2026-10-27_") and "Hauptstrasse-15" in name and name.endswith("245EUR.pdf")
     orig = client.get(f"/api/documents/{doc_id}/file", params={"variant": "original"})
@@ -170,6 +176,8 @@ def test_expenses_summary_issues_and_exports(client):
     doc_id = _upload(client, "rechnung.pdf", make_pdf(INVOICE))["created"][0]
     run_worker()
     client.post(f"/api/documents/{doc_id}/accept", headers=HEADERS)
+    for e in client.get(f"/api/documents/{doc_id}").json()["expenses"]:  # Entwurf aus der Übernahme entfernen
+        client.delete(f"/api/expenses/{e['id']}", headers=HEADERS)
     e1 = client.post("/api/expenses", json={"document_id": doc_id, "amount_cents": 20588, "category_key": "erhaltung_sofort",
                                             "payee": "Heizungsbau Mueller", "invoice_date": "2026-10-27", "paid_on": "2026-11-02",
                                             "status": "bestaetigt"}, headers=HEADERS).json()

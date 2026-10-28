@@ -33,6 +33,8 @@ RESPONSE_SHAPE = {
     "title": "string  (kurzer sprechender Titel, max. 60 Zeichen, z. B. „Heizungswartung 2026“)",
     "doc_date": "YYYY-MM-DD|null",
     "amount_cents": "int|null  (nur bei Rechnungen/Belegen)",
+    "invoice_number": "string|null  (Rechnungs- oder Belegnummer, nur wenn im Text)",
+    "expense_category": "string|null  (nur bei Rechnungen zu einem Mietobjekt; Schlüssel aus der Liste der Ausgabenkategorien)",
     "confidence": "float 0..1",
     "reason": "string  (ein Satz, warum)",
     "evidence": "string  (wörtliches Zitat)",
@@ -48,12 +50,15 @@ def build_prompt(text: str, categories: list[dict[str, Any]], properties: list[d
     cat_lines = "\n".join(f"{c['id']}: {c['path']}" for c in categories)
     prop_lines = "\n".join(f"{p['id']}: {p['name']} – {p['address']}" for p in properties) or "(keine)"
     corr = ", ".join(correspondents[:150]) or "(noch keine)"
+    from .seed import EXPENSE_CATEGORIES
+    exp_lines = "\n".join(f"{c['key']}: {c['label']}" for c in EXPENSE_CATEGORIES)
     hint = {"privat": "Der Nutzer hat das Dokument im Bereich Privat hochgeladen.",
             "vermietung": "Der Nutzer hat das Dokument im Bereich Vermietung hochgeladen."}.get(area_hint, "Der Bereich ist offen.")
     return (
         f"{hint}\n\nKategorien (id: Bereich › Kategorie):\n{cat_lines}\n\n"
         f"Mietobjekte (id: Name – Adresse):\n{prop_lines}\n\n"
         f"Bekannte Absender: {corr}\n\n"
+        f"Ausgabenkategorien (Schlüssel: Bezeichnung):\n{exp_lines}\n\n"
         f"Antwortformat (JSON): {json.dumps(RESPONSE_SHAPE, ensure_ascii=False)}\n\n"
         f"Dokumenttext (gekürzt):\n<<<\n{text[:MAX_TEXT_CHARS]}\n>>>"
     )

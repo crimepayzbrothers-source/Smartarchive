@@ -15,8 +15,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import config, extract, mistral
+from . import config, extract, invoices, mistral
 from .db import audit, get_setting, now, rows
+from .seed import EXPENSE_KEYS
 
 log = logging.getLogger("smartarchive.classify")
 
@@ -139,6 +140,14 @@ def _ai_candidate(conn: sqlite3.Connection, text: str, upload_area: str, cats: l
     amount = res.get("amount_cents")
     if isinstance(amount, (int, float)) and 0 < amount < 10_000_000_00:
         payload["amount_cents"] = int(amount)
+    ai_invoice = {}
+    if isinstance(res.get("invoice_number"), str) and res["invoice_number"].strip():
+        ai_invoice["number"] = res["invoice_number"].strip()[:30]
+    if res.get("expense_category") in EXPENSE_KEYS:
+        ai_invoice["expense_category"] = res["expense_category"]
+        ai_invoice["expense_reason"] = "Vorschlag der KI"
+    if ai_invoice:
+        payload["ai_invoice"] = ai_invoice
     return Candidate("ai", conf, payload, (res.get("reason") or "").strip()[:240], evidence[:160])
 
 
@@ -246,6 +255,15 @@ def analyze(conn: sqlite3.Connection, document_id: int) -> Candidate | None:
         dt = extract.detect_doc_type(text)
         if dt:
             p["doc_type"] = dt
+    if p.get("doc_type") in invoices.INVOICE_TYPES:
+        inv = invoices.fields(text, p.get("doc_type"), p.get("doc_date"))
+        inv.update(p.pop("ai_invoice", {}))
+        if p.get("amount_cents"):
+            inv["amount_cents"] = p["amount_cents"]
+        elif inv.get("amount_cents"):
+            p["amount_cents"] = inv["amount_cents"]
+        p["invoice"] = inv
+    p.pop("ai_invoice", None)
     if not p.get("title"):
         corr = corr_name or p.get("correspondent_name") or ""
         if not corr and p.get("correspondent_id"):
@@ -342,6 +360,8 @@ def decide(conn: sqlite3.Connection, document_id: int, cand: Candidate) -> str:
     )
     audit(conn, "auto_filed" if status == "filed" else "suggested", "document", document_id,
           {"source": cand.source, "confidence": cand.confidence, "blockers": blockers}, actor="system")
+    if status == "filed":
+        invoices.ensure_draft_expense(conn, document_id)  # nur Entwurf, Bestätigung durch Sie
     return status
 
 

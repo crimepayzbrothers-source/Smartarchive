@@ -48,9 +48,9 @@ export default function UploadSheet({ open, onClose, defaultArea = "auto", onDon
       setItems([]);
       onDone?.();
       if (res.created.length && !res.duplicates.length && !res.rejected.length) {
-        toast({ kind: "ok", text: res.created.length === 1 ? "Hochgeladen – wird verarbeitet." : `${res.created.length} Dokumente hochgeladen.` });
+        toast({ kind: "ok", text: res.created.length === 1 ? "Hochgeladen – Texterkennung läuft …" : `${res.created.length} Dokumente hochgeladen.` });
         onClose();
-        go("/eingang");
+        go(res.created.length === 1 ? `/dokument/${res.created[0]}` : "/eingang");
       }
     } catch (e: any) {
       setError(e.message);

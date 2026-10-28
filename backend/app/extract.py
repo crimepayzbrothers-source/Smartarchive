@@ -158,6 +158,7 @@ DOC_TYPES = [
     ("Gutschrift", r"\bgutschrift\b"),
     ("Rechnung", r"\brechnung\b|\brechnungs(nummer|datum)|\binvoice\b"),
     ("Kassenbon", r"kassenbon|\bbon[- ]?nr|\bkassenbeleg"),
+    ("Quittung", r"\bquittung\b"),
     ("Kontoauszug", r"kontoauszug"),
     ("Angebot", r"\bangebot\b|kostenvoranschlag"),
     ("Vertrag", r"\bvertrag\b|vereinbarung zwischen"),

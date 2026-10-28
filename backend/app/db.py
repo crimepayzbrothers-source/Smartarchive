@@ -239,6 +239,10 @@ MIGRATIONS: list[str] = [
         PRIMARY KEY (source, source_id)
     );
     """,
+    # 3 – Herkunft einer Ausgabe (user | auto), damit System-Entwürfe erkennbar bleiben
+    """
+    ALTER TABLE expenses ADD COLUMN origin TEXT NOT NULL DEFAULT 'user';
+    """,
 ]
 
 
