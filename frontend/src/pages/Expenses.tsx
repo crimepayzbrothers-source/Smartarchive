@@ -3,6 +3,7 @@ import { ApiError, centsToInput, date, get, money, parseMoney, post } from "../a
 import { go, useLoad, useMeta, useToast } from "../lib";
 import { Empty, ErrorBox, Icon, Loading } from "../components/ui";
 import { extractHint, fetchExtract, type Extracted } from "../extract";
+import { AmountPicker } from "../components/AmountPicker";
 
 export default function Expenses({ params }: { params: URLSearchParams }) {
   const { meta } = useMeta();
@@ -319,6 +320,7 @@ function MissingRow({ item, onChanged }: { item: any; onChanged: () => void }) {
       {extractHint(x) && <p className="hint">{extractHint(x)}</p>}
       <div className="form grid">
         <label>Betrag (€)<input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0,00" /></label>
+        <div className="span2"><AmountPicker x={x} value={amount} onPick={(c) => setAmount(centsToInput(c))} /></div>
         <label>Kategorie
           <select value={cat} onChange={(e) => setCat(e.target.value)}>
             <option value="">– wählen –</option>

@@ -4,6 +4,7 @@ import { centsToInput, date, money, parseMoney, post } from "../api";
 import { useMeta, useToast, type Meta } from "../lib";
 import { CategorySelect, Icon } from "./ui";
 import { extractHint, fetchExtract, type Extracted } from "../extract";
+import { AmountPicker } from "./AmountPicker";
 
 const INVOICE_TYPES = ["Rechnung", "Kassenbon", "Quittung"];
 
@@ -174,6 +175,7 @@ function InvoiceCardInner({ doc, onChanged, compact = false, meta }: CardProps &
                     {extractHint(x) && <span className="hint">{extractHint(x)}</span>}
                   </div>
                   <label>Betrag (€)<input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0,00" /></label>
+                  <div className="span2"><AmountPicker x={x} value={amount} onPick={(c) => setAmount(centsToInput(c))} /></div>
                   <label>Ausgabenkategorie
                     <select value={expCat} onChange={(e) => setExpCat(e.target.value)}>
                       <option value="">– wählen –</option>

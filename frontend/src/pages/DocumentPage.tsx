@@ -5,6 +5,7 @@ import { SuggestionBox } from "../components/Suggestion";
 import { InvoiceCard, needsInvoiceCard } from "../components/InvoiceCard";
 import { DateQuestion } from "../components/DateQuestion";
 import { applyExtract, extractHint, fetchExtract, type Extracted } from "../extract";
+import { AmountPicker } from "../components/AmountPicker";
 import { AreaBadge, BackButton, CategorySelect, ErrorBox, Icon, Loading, sourceLabel } from "../components/ui";
 
 const ACTION_LABEL: Record<string, string> = {
@@ -418,6 +419,7 @@ function Expenses({ doc, onChanged }: { doc: any; onChanged: () => void }) {
             {extractHint(extracted) && <span className="hint">{extractHint(extracted)}</span>}
           </div>
           <label>Betrag (€)<input inputMode="decimal" value={editing.amount} onChange={(e) => setEditing({ ...editing, amount: e.target.value })} placeholder="0,00" autoFocus /></label>
+          <div className="span2"><AmountPicker x={extracted} value={editing.amount} onPick={(c) => setEditing({ ...editing, amount: centsToInput(c) })} /></div>
           <label>Kategorie
             <select value={editing.category_key} onChange={(e) => setEditing({ ...editing, category_key: e.target.value })}>
               <option value="">– wählen –</option>

@@ -332,8 +332,9 @@ def assume_payment_dates(conn: sqlite3.Connection) -> int:
 def extract_for_document(conn: sqlite3.Connection, document_id: int, use_ai: bool = True) -> dict[str, Any]:
     """„Aus Beleg auslesen“: Positionsdaten aus dem erkannten Text, mit Herkunft je Feld.
 
-    Reihenfolge für den Betrag: beschrifteter Endbetrag -> KI (falls eingerichtet, Betrag muss im Text stehen)
-    -> größter Betrag im Beleg (als „bitte prüfen“ markiert).
+    Betrag: nur ein beschrifteter Endbetrag wird übernommen. Ist keiner eindeutig erkennbar, liefert die Antwort
+    alle Beträge des Belegs („candidates“) zur Auswahl; ein KI-Vorschlag (falls eingerichtet, nur wenn er im Text
+    steht) wird lediglich hervorgehoben („suggested_cents“), nie automatisch eingesetzt.
     """
     d = row(conn.execute(_DOC_SELECT + " WHERE d.id = ?", (document_id,)))
     if not d:
@@ -354,21 +355,20 @@ def extract_for_document(conn: sqlite3.Connection, document_id: int, use_ai: boo
         "category_key": f.get("expense_category"), "category_reason": f.get("expense_reason"),
         "note": f"Rechnung Nr. {f['number']}" if f.get("number") else "",
     }
+    out["candidates"] = extract.amount_candidates(text)
+    # Nur ein beschrifteter Endbetrag gilt als eindeutig. Sonst: Auswahl durch Sie (KI-Vorschlag nur hervorgehoben).
+    out["needs_choice"] = not out["amount_cents"] and bool(out["candidates"])
     if (not out["amount_cents"] or not out["invoice_date"]) and use_ai:
         ai = _ai_extract(conn, text)
         if ai:
             if not out["amount_cents"] and ai.get("amount_cents"):
-                out.update(amount_cents=ai["amount_cents"], amount_source="ai", amount_evidence=ai.get("amount_evidence"))
+                out["suggested_cents"] = ai["amount_cents"]
             if not out["invoice_date"] and ai.get("doc_date"):
                 out.update(invoice_date=ai["doc_date"], date_evidence="Vorschlag der KI")
                 if not f.get("paid_on"):
                     out.update(paid_on=ai["doc_date"], paid_assumed=True)
             out["payee"] = out["payee"] or ai.get("correspondent") or ""
             out["category_key"] = out["category_key"] or ai.get("expense_category")
-    if not out["amount_cents"]:
-        amount, ev = extract.largest_amount(text)
-        if amount:
-            out.update(amount_cents=amount, amount_source="largest", amount_evidence=ev)
     return out
 
 

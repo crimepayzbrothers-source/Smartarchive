@@ -269,3 +269,32 @@ def largest_amount(text: str) -> tuple[int | None, str]:
             if 0 < cents < 10_000_000_00 and (best is None or cents > best[0]):
                 best = (cents, line.strip()[:160])
     return best if best else (None, "")
+
+
+_AMOUNT_TAGS = [
+    ("Endbetrag", re.compile(r"gesamtbetrag|rechnungsbetrag|endbetrag|zahlbetrag|zu zahlen|zahlbarer betrag|gesamtsumme|"
+                             r"summe brutto|brutto|\bsumme\b|\bgesamt\b|\btotal\b", re.I)),
+    ("Steuer", re.compile(r"mwst|mehrwertsteuer|\bust\b|umsatzsteuer|\d+\s?%", re.I)),
+    ("Netto", re.compile(r"netto|zwischensumme", re.I)),
+    ("Zahlung", re.compile(r"\bbar\b|gegeben|r(?:ü|ue)ckgeld|girocard|ec[- ]?karte", re.I)),
+    ("Abschlag", re.compile(r"abschlag|vorauszahlung|rate\b|raten", re.I)),
+    ("Rabatt", re.compile(r"rabatt|skonto|nachlass", re.I)),
+]
+
+
+def amount_candidates(text: str, limit: int = 30) -> list[dict]:
+    """Alle Beträge im Beleg in Lesereihenfolge, je mit Zeile und Art (zur Auswahl durch Sie)."""
+    out: list[dict] = []
+    seen: set[int] = set()
+    for line in text.splitlines():
+        found = [parse_amount(m.group(1), m.group(2)) for m in _AMOUNT.finditer(line)]
+        found += [int(m.group(1)) * 100 + int(m.group(2)) for m in _AMOUNT_DOT.finditer(line)]
+        for cents in found:
+            if not (0 < cents < 10_000_000_00) or cents in seen:
+                continue
+            seen.add(cents)
+            tag = next((name for name, pat in _AMOUNT_TAGS if pat.search(line)), None)
+            out.append({"amount_cents": cents, "line": line.strip()[:120], "tag": tag})
+            if len(out) >= limit:
+                return out
+    return out

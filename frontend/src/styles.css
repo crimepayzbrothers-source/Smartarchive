@@ -491,3 +491,14 @@ dialog.scanner::backdrop { background: #0b1013; }
 .warn-text { color: var(--ochre); }
 .read-row { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
 .read-row .hint { margin: 0; flex: 1 1 200px; }
+
+/* --- Betragsauswahl ---------------------------------------------------------- */
+.amount-picker { display: flex; flex-direction: column; gap: .35rem; }
+.amount-option { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: .2rem .5rem; text-align: left; min-height: 44px;
+  padding: .5rem .7rem; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--ink); }
+.amount-option strong { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.amount-line { font-size: .82rem; color: var(--ink-3); min-width: 0; overflow-wrap: anywhere; flex-basis: 100%; order: 3; }
+.amount-option.on { border-color: var(--petrol); box-shadow: inset 0 0 0 1px var(--petrol); background: var(--petrol-soft); }
+.amount-tag { font-size: .72rem; padding: .05rem .45rem; border-radius: 99px; background: var(--surface-2); color: var(--ink-2); white-space: nowrap; }
+.amount-tag.good { background: var(--vermietung-soft); color: var(--ok); }
+.small-link { font-size: .86rem; padding: 0; min-height: 0; justify-content: flex-start; }

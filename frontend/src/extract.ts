@@ -5,6 +5,7 @@ export type Extracted = {
   text_available: boolean; amount_cents?: number | null; amount_source?: "label" | "ai" | "largest" | null;
   amount_evidence?: string | null; invoice_date?: string | null; date_evidence?: string | null; paid_on?: string | null;
   paid_assumed?: boolean; payee?: string; category_key?: string | null; category_reason?: string | null; note?: string;
+  candidates?: { amount_cents: number; line: string; tag: string | null }[]; needs_choice?: boolean; suggested_cents?: number;
 };
 
 export const fetchExtract = (docId: number) => get<Extracted>(`/api/documents/${docId}/extract`);
@@ -33,10 +34,9 @@ export function extractHint(x: Extracted | null): string | null {
   if (!x) return null;
   if (!x.text_available) return "Im Beleg wurde kein Text erkannt. Bitte „Texterkennung wiederholen“ oder Werte von Hand eintragen.";
   const parts: string[] = [];
-  if (x.amount_source === "largest") parts.push(`Betrag ohne Beschriftung – größter Betrag im Beleg („${x.amount_evidence}“), bitte prüfen`);
-  else if (x.amount_source === "ai") parts.push("Betrag von der KI erkannt und im Beleg gefunden");
-  else if (x.amount_evidence) parts.push(`Betrag aus „${x.amount_evidence}“`);
-  if (!x.amount_cents) parts.push("kein Betrag gefunden");
+  if (x.amount_evidence && x.amount_cents) parts.push(`Betrag aus „${x.amount_evidence}“`);
+  else if (x.needs_choice) parts.push("kein eindeutiger Endbetrag – bitte den richtigen Betrag unten antippen");
+  else if (!x.amount_cents) parts.push("kein Betrag gefunden");
   if (!x.invoice_date) parts.push("kein Datum gefunden");
   else if (x.paid_assumed) parts.push("Zahlungsdatum = Rechnungsdatum angenommen");
   return parts.join(" · ");

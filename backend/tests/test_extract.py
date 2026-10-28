@@ -20,12 +20,17 @@ def test_extract_labeled_invoice(client):
     assert x["note"] == "Rechnung Nr. 2026-1041"
 
 
-def test_extract_without_total_label_uses_largest_amount(client):
+def test_extract_without_total_label_offers_choice(client):
+    """Ohne beschrifteten Endbetrag kein Raten: alle Beträge zur Auswahl, auch Beispielwerte."""
     lines = ["Dach GmbH", "Datum 12.09.2026", "Dachrinne reinigen    180,00", "Material    45,50",
-             "MwSt 19%    42,85", "  268,35 EUR"]
+             "MwSt 19%    42,85", "  268,35 EUR", "Beispiel: Wartungsvertrag ab 1.999,00 jährlich"]
     doc = _up(client, "x.pdf", make_pdf(lines))
     x = client.get(f"/api/documents/{doc}/extract").json()
-    assert (x["amount_cents"], x["amount_source"]) == (26835, "largest")  # MwSt-Zeile ausgeschlossen
+    assert x["amount_cents"] is None and x["needs_choice"] is True
+    assert [c["amount_cents"] for c in x["candidates"]] == [18000, 4550, 4285, 26835, 199900]
+    tags = {c["amount_cents"]: c["tag"] for c in x["candidates"]}
+    assert tags[4285] == "Steuer"
+    assert x["candidates"][-1]["line"].startswith("Beispiel: Wartungsvertrag")
     assert x["invoice_date"] == "2026-09-12"
 
 
@@ -54,7 +59,9 @@ def test_extract_ai_amount_must_be_in_text(client, monkeypatch):
     doc = _up(client, "brief.pdf", make_pdf(lines))
     monkeypatch.setattr(mistral, "extract_invoice", lambda text, timeout=30: {"amount_cents": 31240, "doc_date": "2026-08-01"})
     x = client.get(f"/api/documents/{doc}/extract").json()
-    assert (x["amount_cents"], x["amount_source"], x["invoice_date"]) == (31240, "ai", "2026-08-01")
+    # KI-Vorschlag wird nur hervorgehoben, nicht eingesetzt
+    assert x["amount_cents"] is None and x["suggested_cents"] == 31240 and x["needs_choice"] is True
+    assert x["invoice_date"] == "2026-08-01"
     monkeypatch.setattr(mistral, "extract_invoice", lambda text, timeout=30: {"amount_cents": 99999})  # erfunden
     x = client.get(f"/api/documents/{doc}/extract").json()
-    assert x["amount_source"] != "ai"
+    assert "suggested_cents" not in x
