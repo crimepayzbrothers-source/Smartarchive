@@ -4,6 +4,7 @@ import { go, useLoad, useMeta, usePoll, useToast } from "../lib";
 import { SuggestionBox } from "../components/Suggestion";
 import { InvoiceCard, needsInvoiceCard } from "../components/InvoiceCard";
 import { DateQuestion } from "../components/DateQuestion";
+import { DuplicateCard } from "../components/DuplicateCard";
 import { applyExtract, extractHint, fetchExtract, type Extracted } from "../extract";
 import { AmountPicker } from "../components/AmountPicker";
 import { AreaBadge, BackButton, CategorySelect, ErrorBox, Icon, Loading, sourceLabel } from "../components/ui";
@@ -65,6 +66,8 @@ export default function DocumentPage({ id }: { id: number }) {
         <div className="notice warn">Liegt im Papierkorb. <button className="link" onClick={() => post(`/api/documents/${id}/restore`).then(reload)}>Wiederherstellen</button></div>
       )}
 
+      {doc.duplicate && <DuplicateCard docId={id} dup={doc.duplicate} onChanged={reload} />}
+
       <div className="doc-layout">
         <section className="preview">
           {doc.status === "processing" ? (
@@ -113,7 +116,7 @@ export default function DocumentPage({ id }: { id: number }) {
             <DateQuestion docId={id} amount={doc.expenses[0]?.amount_cents} onChanged={reload}
               suggestion={doc.doc_date} candidates={doc.date_candidates || []} />
           )}
-          {invoiceCard && <InvoiceCard doc={doc} onChanged={reload} />}
+          {invoiceCard && !doc.duplicate && <InvoiceCard doc={doc} onChanged={reload} />}
           {!invoiceCard && doc.suggestion && doc.status !== "processing" && (doc.suggestion.status === "open" || doc.suggestion.status === "applied" || doc.suggestion.status === "info") && !(doc.confirmed && doc.status === "filed") && (
             <SuggestionBox docId={id} status={doc.status} suggestion={doc.suggestion} onChanged={reload} />
           )}

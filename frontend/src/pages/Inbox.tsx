@@ -4,6 +4,7 @@ import { SuggestionBox } from "../components/Suggestion";
 import { InvoiceCard, needsInvoiceCard } from "../components/InvoiceCard";
 import { TxCard } from "../components/TxCard";
 import { DateQuestion } from "../components/DateQuestion";
+import { DuplicateCard } from "../components/DuplicateCard";
 import { DocRow, Empty, ErrorBox, Icon, Loading } from "../components/ui";
 
 export default function Inbox({ onCapture }: { onCapture: () => void }) {
@@ -20,6 +21,7 @@ export default function Inbox({ onCapture }: { onCapture: () => void }) {
   const open = data.pending.filter((d: any) => d.status === "inbox");
   const auto = data.auto_filed;
   const undated = data.undated || [];
+  const dups = data.duplicates || [];
 
   const retry = async (id: number) => {
     await post(`/api/documents/${id}/run/process`);
@@ -27,7 +29,7 @@ export default function Inbox({ onCapture }: { onCapture: () => void }) {
     reload();
   };
 
-  if (!failed.length && !open.length && !auto.length && !processing.length && !txs.open.length && !txs.auto.length && !undated.length) {
+  if (!failed.length && !open.length && !auto.length && !processing.length && !txs.open.length && !txs.auto.length && !undated.length && !dups.length) {
     return (
       <div className="page">
         <h1 className="page-title">Eingang</h1>
@@ -80,6 +82,17 @@ export default function Inbox({ onCapture }: { onCapture: () => void }) {
                   <div className="row-extra"><a className="secondary button" href={`#/dokument/${d.id}`}>Ablage wählen</a></div>
                 )}
               </DocRow>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {dups.length > 0 && (
+        <section className="group">
+          <h2 className="group-title danger">Mögliche Duplikate <span className="count">{dups.length}</span></h2>
+          <div className="doc-list">
+            {dups.map((d: any) => (
+              <DocRow key={d.id} doc={d}><DuplicateCard docId={d.id} dup={d.duplicate} onChanged={reload} compact /></DocRow>
             ))}
           </div>
         </section>

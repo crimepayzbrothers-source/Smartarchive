@@ -10,7 +10,7 @@ import unicodedata
 from pathlib import Path
 from typing import Any
 
-from . import classify, invoices, ocr, storage
+from . import classify, duplicates, invoices, ocr, storage
 from .db import audit, now, row, rows, tx
 
 log = logging.getLogger("smartarchive.documents")
@@ -243,9 +243,13 @@ def process(conn: sqlite3.Connection, document_id: int) -> str:
             invoices.ensure_expense(conn, document_id, actor="import")
             index_document(conn, document_id)
         return status
+    dup = duplicates.find(conn, document_id)
     cand = classify.analyze(conn, document_id)
     with tx(conn):
         status = classify.decide(conn, document_id, cand)
+        if dup:
+            duplicates.mark(conn, document_id, dup)  # bis zur Entscheidung: nicht ablegen, nichts zählen
+            status = "duplicate"
         index_document(conn, document_id)
     return status
 

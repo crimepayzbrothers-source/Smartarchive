@@ -182,7 +182,8 @@ export default function UploadSheet({ open, onClose, defaultArea = "auto", onDon
           <div className="notice">
             {result.created.length > 0 && <p>{result.created.length} Dokument(e) hochgeladen.</p>}
             {result.duplicates.map((d: any) => (
-              <p key={d.document_id}>„{d.name}“ ist schon vorhanden: <a href={`#/dokument/${d.document_id}`} onClick={onClose}>{d.title}</a></p>
+              <p key={d.document_id}>„{d.name}“ ist bereits gespeichert (identische Datei) – nicht erneut hochgeladen.{" "}
+                <a href={`#/dokument/${d.document_id}`} onClick={onClose}>Vorhandenes öffnen: {d.title}</a></p>
             ))}
             {result.rejected.map((r: any) => <p key={r.name}>„{r.name}“: {r.reason}</p>)}
           </div>

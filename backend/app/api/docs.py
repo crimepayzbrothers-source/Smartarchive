@@ -10,7 +10,7 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, Response
 from starlette.routing import Route
 
-from .. import config, documents, invoices, ocr, search, storage
+from .. import config, documents, duplicates, invoices, ocr, search, storage
 from ..classify import category_paths, get_or_create_correspondent
 from ..db import audit, now, row, rows, tx
 from ..seed import EXPENSE_KEYS
@@ -85,6 +85,7 @@ def detail(conn, document_id: int) -> dict[str, Any]:
     for h in d["history"]:
         h["details"] = json.loads(h["details"])
     d["date_candidates"] = json.loads(d.get("date_candidates") or "[]")
+    d["duplicate"] = duplicates.info(conn, document_id)
     d["display_filename"] = documents.display_filename(conn, document_id)
     d["has_pdf"] = documents.best_pdf(conn, document_id) is not None
     return d
@@ -200,7 +201,13 @@ async def inbox(request: Request, conn, user):
         item["expense"] = by_doc[item["id"]]
         r = conn.execute("SELECT date_status, date_candidates FROM documents WHERE id = ?", (item["id"],)).fetchone()
         item["date_status"], item["date_candidates"] = r[0], json.loads(r[1] or "[]")
-    return {"pending": _decorate(conn, pending), "auto_filed": _decorate(conn, auto), "undated": _decorate(conn, undated_docs)}
+    dups = rows(conn.execute(LIST_SELECT + " WHERE d.deleted_at IS NULL AND d.duplicate_of IS NOT NULL ORDER BY d.id DESC"))
+    for item in dups:
+        item["duplicate"] = duplicates.info(conn, item["id"])
+    dup_ids = {i["id"] for i in dups}
+    pending = [i for i in pending if i["id"] not in dup_ids]
+    return {"pending": _decorate(conn, pending), "auto_filed": _decorate(conn, auto), "undated": _decorate(conn, undated_docs),
+            "duplicates": _decorate(conn, dups)}
 
 
 @endpoint()
@@ -468,6 +475,27 @@ async def set_date(request: Request, conn, user):
     return detail(conn, doc_id)
 
 
+class DuplicateIn(BaseModel):
+    action: str = Field(pattern=r"^(replace|discard|keep)$")
+
+
+@endpoint()
+async def resolve_duplicate(request: Request, conn, user):
+    doc_id = path_int(request)
+    data = await body(request, DuplicateIn)
+    try:
+        with tx(conn):
+            result = duplicates.resolve(conn, doc_id, data.action)
+            if data.action == "replace":
+                conn.execute("DELETE FROM docs_fts WHERE rowid = ?", (doc_id,))
+                documents.index_document(conn, result)
+            if data.action == "keep":
+                documents.enqueue(conn, doc_id, "reclassify")  # jetzt normal einordnen und Betrag erfassen
+    except ValueError as exc:
+        raise ApiError(400, str(exc)) from None
+    return {"document_id": result}
+
+
 @endpoint()
 async def extract_fields(request: Request, conn, user):
     """„Aus Beleg auslesen“ – liefert Vorschläge, speichert nichts."""
@@ -589,6 +617,7 @@ routes = [
     Route("/api/documents/{id:int}/invoice", assign_invoice, methods=["POST"]),
     Route("/api/documents/{id:int}/date", set_date, methods=["POST"]),
     Route("/api/documents/{id:int}/extract", extract_fields, methods=["GET"]),
+    Route("/api/documents/{id:int}/duplicate", resolve_duplicate, methods=["POST"]),
     Route("/api/documents/{id:int}/restore", restore_document, methods=["POST"]),
     Route("/api/documents/{id:int}/run/{kind}", reprocess, methods=["POST"]),
     Route("/api/documents/{id:int}/file", get_file, methods=["GET"]),

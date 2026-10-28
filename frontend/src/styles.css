@@ -505,3 +505,6 @@ dialog.scanner::backdrop { background: #0b1013; }
 .date-confirm { align-self: flex-start; }
 .date-others { display: flex; flex-direction: column; gap: .35rem; }
 .upload-property { display: flex; flex-direction: column; gap: .4rem; margin-top: -.3rem; }
+.suggestion.duplicate { border-color: color-mix(in srgb, var(--danger) 35%, transparent); background: color-mix(in srgb, var(--danger-soft) 55%, var(--surface)); }
+.dup-existing { display: flex; flex-direction: column; gap: .15rem; padding: .55rem .7rem; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--ink); }
+.document > .suggestion.duplicate { margin: 0 0 1rem; }

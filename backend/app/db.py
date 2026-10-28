@@ -305,6 +305,11 @@ MIGRATIONS: list[str] = [
     ALTER TABLE documents ADD COLUMN date_status TEXT;
     ALTER TABLE documents ADD COLUMN date_candidates TEXT NOT NULL DEFAULT '[]';
     """,
+    # 8 – mögliche inhaltliche Dublette (gleiche Rechnung erneut hochgeladen)
+    """
+    ALTER TABLE documents ADD COLUMN duplicate_of INTEGER REFERENCES documents(id) ON DELETE SET NULL;
+    ALTER TABLE documents ADD COLUMN duplicate_reason TEXT;
+    """,
 ]
 
 
