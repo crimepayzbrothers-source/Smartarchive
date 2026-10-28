@@ -72,8 +72,9 @@ export default function Expenses({ params }: { params: URLSearchParams }) {
 
       <section className="panel export">
         <h2>Export für die Steuererklärung {year}</h2>
-        <p className="muted">Alle erfassten Aufwendungen je Objekt, jede Zeile mit Verweis auf ihren Beleg. Spalte „Erfassung“ zeigt, ob ein
-          Betrag automatisch ausgelesen oder von Ihnen geprüft ist. Entwürfe stehen in Excel auf dem Blatt „Offen“.</p>
+        <p className="muted">Alle Positionen chronologisch mit Datum, Monat und Jahr, Monatssummen je Objekt und einer Belegnummer, die in
+          Excel, CSV und PDF gleich ist. Im PDF folgen die Belege mit aufgestempelter Nummer. Spalte „Erfassung“: automatisch ausgelesen
+          oder geprüft.</p>
         <div className="row-actions">
           <a className="primary button" href={`/api/export/expenses.xlsx?${qs}`}><Icon name="down" size={18} /> Excel</a>
           <a className="secondary button" href={`/api/export/expenses.csv?${qs}`}>CSV</a>
