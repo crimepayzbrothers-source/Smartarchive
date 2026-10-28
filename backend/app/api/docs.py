@@ -460,6 +460,13 @@ async def set_date(request: Request, conn, user):
 
 
 @endpoint()
+async def extract_fields(request: Request, conn, user):
+    """„Aus Beleg auslesen“ – liefert Vorschläge, speichert nichts."""
+    doc_id = path_int(request)
+    return await run_in_threadpool(invoices.extract_for_document, conn, doc_id)
+
+
+@endpoint()
 async def undo_auto(request: Request, conn, user):
     """Automatische Ablage zurücknehmen: Dokument zurück in den Eingang."""
     doc_id = path_int(request)
@@ -572,6 +579,7 @@ routes = [
     Route("/api/documents/{id:int}/undo", undo_auto, methods=["POST"]),
     Route("/api/documents/{id:int}/invoice", assign_invoice, methods=["POST"]),
     Route("/api/documents/{id:int}/date", set_date, methods=["POST"]),
+    Route("/api/documents/{id:int}/extract", extract_fields, methods=["GET"]),
     Route("/api/documents/{id:int}/restore", restore_document, methods=["POST"]),
     Route("/api/documents/{id:int}/run/{kind}", reprocess, methods=["POST"]),
     Route("/api/documents/{id:int}/file", get_file, methods=["GET"]),

@@ -247,3 +247,25 @@ def date_from_name(*names: str | None) -> str | None:
             if dt:
                 return dt.isoformat()
     return None
+
+
+_AMOUNT_DOT = re.compile(r"(?<![\d.,])(\d{1,6})\.(\d{2})(?!\d)\s*(?:€|eur|euro)", re.I)
+_NOT_TOTAL = re.compile(r"mwst|mehrwertsteuer|ust\b|umsatzsteuer|netto|iban|tel|fax|steuer-?nr|ust-?id|kunden|konto|blz|"
+                        r"zwischensumme|rabatt|skonto|gegeben|rückgeld|rueckgeld", re.I)
+
+
+def largest_amount(text: str) -> tuple[int | None, str]:
+    """Notbehelf ohne beschrifteten Endbetrag: größter Betrag im Beleg (ohne Steuer-, Netto-, Bankzeilen)."""
+    best: tuple[int, str] | None = None
+    for line in text.splitlines():
+        if _NOT_TOTAL.search(line):
+            continue
+        for m in _AMOUNT.finditer(line):
+            cents = parse_amount(m.group(1), m.group(2))
+            if 0 < cents < 10_000_000_00 and (best is None or cents > best[0]):
+                best = (cents, line.strip()[:160])
+        for m in _AMOUNT_DOT.finditer(line):
+            cents = int(m.group(1)) * 100 + int(m.group(2))
+            if 0 < cents < 10_000_000_00 and (best is None or cents > best[0]):
+                best = (cents, line.strip()[:160])
+    return best if best else (None, "")

@@ -135,3 +135,29 @@ def classify_transaction(tx: dict[str, Any], properties: list[dict[str, Any]], t
         raise AIError(f"Mistral antwortete mit HTTP {exc.code}") from exc
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
         raise AIError(f"KI-Antwort nicht verwertbar: {exc}") from exc
+
+
+
+def extract_invoice(text: str, timeout: float = 30) -> dict[str, Any]:
+    """Nur Felder auslesen (keine Einordnung). Gesendet wird ein gekürzter Textauszug."""
+    from .seed import EXPENSE_CATEGORIES
+    cfg = config.settings
+    if not cfg.mistral_api_key:
+        raise AIError("Kein API-Schlüssel konfiguriert")
+    keys = ", ".join(c["key"] for c in EXPENSE_CATEGORIES)
+    prompt = ("Lies aus dieser Rechnung bzw. diesem Beleg den Endbetrag (zu zahlender Bruttobetrag, in Cent als Ganzzahl), "
+              "das Rechnungsdatum (YYYY-MM-DD), den Aussteller und eine Ausgabenkategorie (einer von: " + keys + "). "
+              "Antworte nur mit JSON: {\"amount_cents\": int|null, \"doc_date\": str|null, \"correspondent\": str|null, "
+              "\"expense_category\": str|null}. Unbekannte Felder sind null. Erfinde nichts.\n\n<<<\n" + text[:MAX_TEXT_CHARS] + "\n>>>")
+    body = json.dumps({"model": cfg.mistral_model, "temperature": 0, "response_format": {"type": "json_object"},
+                       "messages": [{"role": "user", "content": prompt}]}).encode()
+    req = urllib.request.Request(cfg.mistral_base_url.rstrip("/") + "/chat/completions", data=body, method="POST",
+                                 headers={"Authorization": f"Bearer {cfg.mistral_api_key}", "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            payload = json.loads(resp.read().decode())
+        return json.loads(payload["choices"][0]["message"]["content"])
+    except urllib.error.HTTPError as exc:
+        raise AIError(f"Mistral antwortete mit HTTP {exc.code}") from exc
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
+        raise AIError(f"KI-Antwort nicht verwertbar: {exc}") from exc

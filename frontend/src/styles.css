@@ -489,3 +489,5 @@ dialog.scanner::backdrop { background: #0b1013; }
 .date-row { display: flex; gap: .5rem; flex-wrap: wrap; }
 .date-row input { flex: 1 1 160px; }
 .warn-text { color: var(--ochre); }
+.read-row { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+.read-row .hint { margin: 0; flex: 1 1 200px; }

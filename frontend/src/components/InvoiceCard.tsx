@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 import { centsToInput, date, money, parseMoney, post } from "../api";
 import { useMeta, useToast, type Meta } from "../lib";
 import { CategorySelect, Icon } from "./ui";
+import { extractHint, fetchExtract, type Extracted } from "../extract";
 
 const INVOICE_TYPES = ["Rechnung", "Kassenbon", "Quittung"];
 
@@ -55,6 +56,23 @@ function InvoiceCardInner({ doc, onChanged, compact = false, meta }: CardProps &
   const [payee, setPayee] = useState<string>(draft?.payee || doc.correspondent_name || doc.suggestion?.labels?.correspondent || inv.payee || "");
   const [note, setNote] = useState<string>(draft?.note ?? (inv.number ? `Rechnung Nr. ${inv.number}` : ""));
   const [busy, setBusy] = useState(false);
+  const [x, setX] = useState<Extracted | null>(null);
+  const read = async () => {
+    setBusy(true);
+    try {
+      const r = await fetchExtract(doc.id);
+      setX(r);
+      if (r.amount_cents && !amount.trim()) setAmount(centsToInput(r.amount_cents));
+      if (r.category_key && !expCat) setExpCat(r.category_key);
+      if (r.invoice_date && !invoiceDate) setInvoiceDate(r.invoice_date);
+      if (r.payee && !payee) setPayee(r.payee);
+      if (r.note && !note) setNote(r.note);
+    } catch (e: any) {
+      toast({ kind: "error", text: e.message });
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const known = area === "privat" || (area === "vermietung" && (propertyId !== null || properties.length === 0));
   const [editing, setEditing] = useState(!known);
@@ -149,6 +167,12 @@ function InvoiceCardInner({ doc, onChanged, compact = false, meta }: CardProps &
               )}
               {area === "vermietung" && (
                 <>
+                  <div className="span2 read-row">
+                    <button type="button" className="secondary small" disabled={busy} onClick={read}>
+                      <Icon name="spark" size={16} /> Aus Beleg auslesen
+                    </button>
+                    {extractHint(x) && <span className="hint">{extractHint(x)}</span>}
+                  </div>
                   <label>Betrag (€)<input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0,00" /></label>
                   <label>Ausgabenkategorie
                     <select value={expCat} onChange={(e) => setExpCat(e.target.value)}>

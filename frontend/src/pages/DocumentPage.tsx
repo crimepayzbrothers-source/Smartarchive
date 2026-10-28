@@ -4,6 +4,7 @@ import { go, useLoad, useMeta, usePoll, useToast } from "../lib";
 import { SuggestionBox } from "../components/Suggestion";
 import { InvoiceCard, needsInvoiceCard } from "../components/InvoiceCard";
 import { DateQuestion } from "../components/DateQuestion";
+import { applyExtract, extractHint, fetchExtract, type Extracted } from "../extract";
 import { AreaBadge, BackButton, CategorySelect, ErrorBox, Icon, Loading, sourceLabel } from "../components/ui";
 
 const ACTION_LABEL: Record<string, string> = {
@@ -312,10 +313,40 @@ function Expenses({ doc, onChanged }: { doc: any; onChanged: () => void }) {
   const labels = useMemo(() => Object.fromEntries(meta!.expense_categories.map((c) => [c.key, c.label])), [meta]);
   const sum = doc.expenses.reduce((s: number, e: any) => s + e.amount_cents, 0);
 
-  const startNew = () => setEditing({
-    amount: doc.expenses.length ? "" : centsToInput(sug.amount_cents), category_key: "", invoice_date: doc.doc_date || sug.doc_date || "",
-    paid_on: "", payee: doc.correspondent_name || "", note: "", status: "entwurf", property_id: doc.property_id,
-  });
+  const [extracted, setExtracted] = useState<Extracted | null>(null);
+  const [reading, setReading] = useState(false);
+  const readFromDoc = async (form: any, overwrite = false) => {
+    setReading(true);
+    try {
+      const x = await fetchExtract(doc.id);
+      setExtracted(x);
+      const { form: next, changed } = applyExtract(form, x, overwrite);
+      setEditing(next);
+      if (!x.text_available) return null;
+      if (changed.length) toast({ kind: "ok", text: `Ausgefüllt: ${changed.join(", ")}.` });
+      return changed;
+    } catch (e: any) {
+      toast({ kind: "error", text: e.message });
+      return null;
+    } finally {
+      setReading(false);
+    }
+  };
+  const readButton = async () => {
+    const changed = await readFromDoc(editing);
+    if (changed && changed.length === 0) {
+      if (confirm("Alle Felder sind schon ausgefüllt. Mit den Werten aus dem Beleg überschreiben?")) await readFromDoc(editing, true);
+    }
+  };
+  const startNew = () => {
+    const form = {
+      amount: doc.expenses.length ? "" : centsToInput(sug.amount_cents), category_key: "", invoice_date: doc.doc_date || sug.doc_date || "",
+      paid_on: "", payee: doc.correspondent_name || "", note: "", status: "bestaetigt", property_id: doc.property_id,
+    };
+    setEditing(form);
+    setExtracted(null);
+    if (!doc.expenses.length) readFromDoc(form);  // neue Position: gleich aus dem Beleg vorbelegen
+  };
   const startEdit = (e: any) => setEditing({ ...e, amount: centsToInput(e.amount_cents) });
 
   const save = async () => {
@@ -380,6 +411,12 @@ function Expenses({ doc, onChanged }: { doc: any; onChanged: () => void }) {
       </ul>
       {editing ? (
         <div className="form grid expense-form">
+          <div className="span2 read-row">
+            <button type="button" className="secondary small" disabled={reading} onClick={readButton}>
+              <Icon name="spark" size={16} /> {reading ? "Wird ausgelesen …" : "Aus Beleg auslesen"}
+            </button>
+            {extractHint(extracted) && <span className="hint">{extractHint(extracted)}</span>}
+          </div>
           <label>Betrag (€)<input inputMode="decimal" value={editing.amount} onChange={(e) => setEditing({ ...editing, amount: e.target.value })} placeholder="0,00" autoFocus /></label>
           <label>Kategorie
             <select value={editing.category_key} onChange={(e) => setEditing({ ...editing, category_key: e.target.value })}>
@@ -389,7 +426,7 @@ function Expenses({ doc, onChanged }: { doc: any; onChanged: () => void }) {
           </label>
           <label>Rechnungsdatum<input type="date" value={editing.invoice_date || ""} onChange={(e) => setEditing({ ...editing, invoice_date: e.target.value })} /></label>
           <label>Zahlungsdatum<input type="date" value={editing.paid_on || ""} onChange={(e) => setEditing({ ...editing, paid_on: e.target.value })} />
-            <span className="hint">{editing.paid_assumed ? "angenommen (= Rechnungsdatum) – bei Abweichung ändern" : "bestimmt das Jahr"}</span></label>
+            <span className="hint">{editing.paid_assumed ? "angenommen (= Rechnungsdatum) – bei Abweichung ändern" : editing.paid_on ? "bestimmt das Jahr" : "leer = Rechnungsdatum (angenommen)"}</span></label>
           <label>Aussteller<input value={editing.payee} onChange={(e) => setEditing({ ...editing, payee: e.target.value })} /></label>
           <label>Status
             <select value={editing.status} onChange={(e) => setEditing({ ...editing, status: e.target.value })}>

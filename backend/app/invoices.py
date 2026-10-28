@@ -26,6 +26,9 @@ _PAID = re.compile(
     r"(?:\s+am)?\s*[:.]?\s*(\d{1,2}\.\s?\d{1,2}\.\s?(?:\d{4}|\d{2}))?",
     re.I,
 )
+_POS_PAYMENT = re.compile(
+    r"^\s*(?:bar|ec|girocard|maestro|visa|mastercard)\b[^\n]*\d+,\d{2}|\bgegeben\b|r(?:ü|ue)ckgeld|\bgirocard\b|"
+    r"ec[- ]?karte|kartenzahlung|bezahlt mit|kontaktlos", re.I | re.M)
 _RECEIPT_PAYMENT = re.compile(
     r"\b(barzahlung|bar|ec[- ]?karte|girocard|kartenzahlung|gegeben|rückgeld|rueckgeld|kreditkarte|visa|mastercard)\b", re.I)
 
@@ -85,6 +88,10 @@ def detect_paid_on(text: str, doc_type: str | None, doc_date: str | None) -> tup
         m = _RECEIPT_PAYMENT.search(text)
         if m:
             return doc_date, f"Beleg mit Zahlart „{m.group(1)}“"
+    if doc_date:
+        m = _POS_PAYMENT.search(text)  # Zahlung an der Kasse, auch ohne das Wort „Kassenbon“
+        if m:
+            return doc_date, f"An der Kasse bezahlt („{m.group(0).strip()[:30]}“)"
     return None, ""
 
 
@@ -320,3 +327,76 @@ def assume_payment_dates(conn: sqlite3.Connection) -> int:
         "paid_assumed = 1, updated_at = ? WHERE paid_on IS NULL AND origin != 'bank' "
         "AND COALESCE(invoice_date, (SELECT doc_date FROM documents d WHERE d.id = expenses.document_id)) IS NOT NULL", (now(),))
     return cur.rowcount
+
+
+def extract_for_document(conn: sqlite3.Connection, document_id: int, use_ai: bool = True) -> dict[str, Any]:
+    """„Aus Beleg auslesen“: Positionsdaten aus dem erkannten Text, mit Herkunft je Feld.
+
+    Reihenfolge für den Betrag: beschrifteter Endbetrag -> KI (falls eingerichtet, Betrag muss im Text stehen)
+    -> größter Betrag im Beleg (als „bitte prüfen“ markiert).
+    """
+    d = row(conn.execute(_DOC_SELECT + " WHERE d.id = ?", (document_id,)))
+    if not d:
+        raise KeyError(document_id)
+    text = d.get("content") or ""
+    if len(text.strip()) < 10:
+        return {"text_available": False}
+    doc_type = d["doc_type"] or extract.detect_doc_type(text) or "Rechnung"
+    date_, date_ev = extract.detect_date(text)
+    f = fields(text, doc_type, date_)
+    out: dict[str, Any] = {
+        "text_available": True, "doc_type": doc_type,
+        "amount_cents": f.get("amount_cents"), "amount_source": "label" if f.get("amount_cents") else None,
+        "amount_evidence": f.get("amount_evidence"),
+        "invoice_date": date_, "date_evidence": date_ev or None,
+        "paid_on": f.get("paid_on") or date_, "paid_assumed": not f.get("paid_on") and bool(date_),
+        "payee": d.get("correspondent_name") or f.get("payee") or "",
+        "category_key": f.get("expense_category"), "category_reason": f.get("expense_reason"),
+        "note": f"Rechnung Nr. {f['number']}" if f.get("number") else "",
+    }
+    if (not out["amount_cents"] or not out["invoice_date"]) and use_ai:
+        ai = _ai_extract(conn, text)
+        if ai:
+            if not out["amount_cents"] and ai.get("amount_cents"):
+                out.update(amount_cents=ai["amount_cents"], amount_source="ai", amount_evidence=ai.get("amount_evidence"))
+            if not out["invoice_date"] and ai.get("doc_date"):
+                out.update(invoice_date=ai["doc_date"], date_evidence="Vorschlag der KI")
+                if not f.get("paid_on"):
+                    out.update(paid_on=ai["doc_date"], paid_assumed=True)
+            out["payee"] = out["payee"] or ai.get("correspondent") or ""
+            out["category_key"] = out["category_key"] or ai.get("expense_category")
+    if not out["amount_cents"]:
+        amount, ev = extract.largest_amount(text)
+        if amount:
+            out.update(amount_cents=amount, amount_source="largest", amount_evidence=ev)
+    return out
+
+
+def _ai_extract(conn: sqlite3.Connection, text: str) -> dict[str, Any] | None:
+    """Optional: KI (Mistral) liest Betrag/Datum, wenn lokal nichts gefunden wurde. Der Betrag zählt nur, wenn er
+    so im Text vorkommt – erfundene Zahlen werden verworfen."""
+    from . import config, mistral
+    from .db import get_setting
+    from .seed import EXPENSE_KEYS
+    if not (bool(get_setting(conn, "ai_enabled", True)) and config.settings.ai_available):
+        return None
+    try:
+        res = mistral.extract_invoice(text)
+    except mistral.AIError:
+        return None
+    out: dict[str, Any] = {}
+    amt = res.get("amount_cents")
+    if isinstance(amt, (int, float)) and 0 < amt < 10_000_000_00:
+        amt = int(amt)
+        de = f"{amt // 100:,}".replace(",", ".") + f",{amt % 100:02d}"
+        plain = f"{amt // 100},{amt % 100:02d}"
+        if de in text or plain in text or f"{amt // 100}.{amt % 100:02d}" in text:
+            out["amount_cents"] = amt
+            out["amount_evidence"] = "KI, Betrag im Beleg gefunden"
+    if isinstance(res.get("doc_date"), str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", res["doc_date"]):
+        out["doc_date"] = res["doc_date"]
+    if isinstance(res.get("correspondent"), str):
+        out["correspondent"] = res["correspondent"].strip()[:120]
+    if res.get("expense_category") in EXPENSE_KEYS:
+        out["expense_category"] = res["expense_category"]
+    return out

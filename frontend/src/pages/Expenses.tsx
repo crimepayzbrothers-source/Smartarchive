@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { ApiError, centsToInput, date, get, money, parseMoney, post } from "../api";
 import { go, useLoad, useMeta, useToast } from "../lib";
 import { Empty, ErrorBox, Icon, Loading } from "../components/ui";
+import { extractHint, fetchExtract, type Extracted } from "../extract";
 
 export default function Expenses({ params }: { params: URLSearchParams }) {
   const { meta } = useMeta();
@@ -270,6 +271,22 @@ function MissingRow({ item, onChanged }: { item: any; onChanged: () => void }) {
   const [paid, setPaid] = useState<string>(item.paid_on || "");
   const [prop, setProp] = useState<number | null>(item.property_id);
   const [busy, setBusy] = useState(false);
+  const [x, setX] = useState<Extracted | null>(null);
+  const read = async () => {
+    setBusy(true);
+    try {
+      const r = await fetchExtract(item.id);
+      setX(r);
+      if (r.amount_cents && !amount) setAmount(centsToInput(r.amount_cents));
+      if (r.category_key && !cat) setCat(r.category_key);
+      if (r.invoice_date && !date) setDate(r.invoice_date);
+      if (r.paid_on && !paid && !r.paid_assumed) setPaid(r.paid_on);
+    } catch (e: any) {
+      toast({ kind: "error", text: e.message });
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const save = async () => {
     const cents = parseMoney(amount);
@@ -299,6 +316,7 @@ function MissingRow({ item, onChanged }: { item: any; onChanged: () => void }) {
       <a href={`#/dokument/${item.id}`} className="missing-title">{item.title || "Ohne Titel"}</a>
       <span className="muted small">{item.payee || "Aussteller unbekannt"}{item.property_name ? ` · ${item.property_name}` : ""}
         {item.amount_evidence ? ` · erkannt: „${item.amount_evidence}“` : ""}</span>
+      {extractHint(x) && <p className="hint">{extractHint(x)}</p>}
       <div className="form grid">
         <label>Betrag (€)<input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0,00" /></label>
         <label>Kategorie
@@ -320,6 +338,7 @@ function MissingRow({ item, onChanged }: { item: any; onChanged: () => void }) {
       </div>
       <div className="row-actions">
         <button className="primary" disabled={busy} onClick={save}><Icon name="check" size={18} /> Erfassen</button>
+        <button className="secondary" disabled={busy} onClick={read}><Icon name="spark" size={16} /> Aus Beleg auslesen</button>
         <button className="ghost" disabled={busy} onClick={dismiss}>Keine Ausgabe</button>
       </div>
     </li>
