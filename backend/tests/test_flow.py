@@ -272,3 +272,15 @@ def test_street_pattern_variants():
     for s in ("Hauptstraße 15", "Hauptstr. 15", "HAUPTSTRASSE 15", "Hauptstr.15"):
         assert pat.search(s), s
     assert not pat.search("Hauptstraße 150")
+
+
+def test_migration_falls_back_on_old_sqlite(env, monkeypatch):
+    """SQLite ohne „remove_diacritics“ beim Trigramm-Tokenizer (z. B. 3.40 im Docker-Image)."""
+    from app import db
+
+    monkeypatch.setattr(db, "FTS_TOKENIZERS", ("trigram kaputt 1", "trigram"))
+    conn = db.connect()
+    assert db.migrate(conn) == len(db.MIGRATIONS)
+    sql = conn.execute("SELECT sql FROM sqlite_master WHERE name = 'docs_fts'").fetchone()[0]
+    assert "tokenize = 'trigram'" in sql
+    conn.close()

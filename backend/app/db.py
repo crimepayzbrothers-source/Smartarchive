@@ -130,7 +130,7 @@ MIGRATIONS: list[str] = [
     );
     CREATE VIRTUAL TABLE docs_fts USING fts5(
         title, content, meta,
-        tokenize = 'trigram remove_diacritics 1'
+        tokenize = '__FTS_TOKENIZE__'
     );
     CREATE TABLE tags (
         id INTEGER PRIMARY KEY,
@@ -261,10 +261,36 @@ def tx(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
         conn.execute("COMMIT")
 
 
+# Bevorzugter Tokenizer zuerst. Ältere SQLite-Versionen (z. B. 3.40 in Debian Bookworm)
+# kennen „remove_diacritics“ beim Trigramm-Tokenizer nicht, sehr alte gar keinen Trigramm-Tokenizer.
+FTS_TOKENIZERS = ("trigram remove_diacritics 1", "trigram", "unicode61 remove_diacritics 2")
+
+
+def fts_tokenizer() -> str:
+    probe = sqlite3.connect(":memory:")
+    try:
+        for tok in FTS_TOKENIZERS:
+            try:
+                probe.execute(f"CREATE VIRTUAL TABLE t USING fts5(x, tokenize = '{tok}')")
+                return tok
+            except sqlite3.OperationalError:
+                continue
+    finally:
+        probe.close()
+    raise RuntimeError("SQLite ohne FTS5-Unterstützung")
+
+
 def migrate(conn: sqlite3.Connection) -> int:
     version = conn.execute("PRAGMA user_version").fetchone()[0]
+    tokenizer = fts_tokenizer()
     for idx, script in enumerate(MIGRATIONS[version:], start=version + 1):
-        conn.executescript("BEGIN;" + script + f"; PRAGMA user_version = {idx}; COMMIT;")
+        script = script.replace("__FTS_TOKENIZE__", tokenizer)
+        try:
+            conn.executescript("BEGIN;" + script + f"; PRAGMA user_version = {idx}; COMMIT;")
+        except sqlite3.Error:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
     return conn.execute("PRAGMA user_version").fetchone()[0]
 
 
