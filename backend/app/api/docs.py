@@ -189,7 +189,13 @@ async def inbox(request: Request, conn, user):
     for item in pending + auto:
         item["suggestion"] = _suggestion(conn, item["id"])
         item["expenses"] = rows(conn.execute("SELECT * FROM expenses WHERE document_id = ? ORDER BY id", (item["id"],)))
-    return {"pending": _decorate(conn, pending), "auto_filed": _decorate(conn, auto)}
+    und = invoices.undated(conn)
+    by_doc = {u["document_id"]: u for u in und if u["document_id"]}
+    undated_docs = rows(conn.execute(LIST_SELECT + f" WHERE d.id IN ({','.join('?' * len(by_doc))}) ORDER BY d.id DESC",
+                                     list(by_doc))) if by_doc else []
+    for item in undated_docs:
+        item["expense"] = by_doc[item["id"]]
+    return {"pending": _decorate(conn, pending), "auto_filed": _decorate(conn, auto), "undated": _decorate(conn, undated_docs)}
 
 
 @endpoint()
@@ -432,6 +438,23 @@ async def assign_invoice(request: Request, conn, user):
     return detail(conn, doc_id)
 
 
+class DateIn(BaseModel):
+    date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+
+
+@endpoint()
+async def set_date(request: Request, conn, user):
+    """Antwort auf die Datums-Rückfrage: Belegdatum setzen, offene Positionen übernehmen es als Rechnungsdatum."""
+    doc_id = path_int(request)
+    data = await body(request, DateIn)
+    with tx(conn):
+        documents.apply_fields(conn, doc_id, {"doc_date": data.date})
+        conn.execute("UPDATE expenses SET invoice_date = ?, updated_at = ? WHERE document_id = ? AND invoice_date IS NULL",
+                     (data.date, now(), doc_id))
+        documents.index_document(conn, doc_id)
+    return detail(conn, doc_id)
+
+
 @endpoint()
 async def undo_auto(request: Request, conn, user):
     """Automatische Ablage zurücknehmen: Dokument zurück in den Eingang."""
@@ -541,6 +564,7 @@ routes = [
     Route("/api/documents/{id:int}/accept", accept_suggestion, methods=["POST"]),
     Route("/api/documents/{id:int}/undo", undo_auto, methods=["POST"]),
     Route("/api/documents/{id:int}/invoice", assign_invoice, methods=["POST"]),
+    Route("/api/documents/{id:int}/date", set_date, methods=["POST"]),
     Route("/api/documents/{id:int}/restore", restore_document, methods=["POST"]),
     Route("/api/documents/{id:int}/run/{kind}", reprocess, methods=["POST"]),
     Route("/api/documents/{id:int}/file", get_file, methods=["GET"]),

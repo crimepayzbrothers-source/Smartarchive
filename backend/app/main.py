@@ -142,15 +142,15 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 
 
 def _fix_dates(conn) -> None:
-    """Einmalig: Datum für Positionen ohne Datum aus Text/Dateinamen ergänzen (vorher galt das Hochladedatum)."""
+    """Einmalig: Datum neu aus dem Text bestimmen, Dateinamen-Datum entfernen (Rückfrage statt Raten)."""
     from . import invoices
     from .db import get_setting, set_setting, tx
-    if get_setting(conn, "expense_dates_v1"):
+    if get_setting(conn, "expense_dates_v2"):
         return
     try:
         with tx(conn):
-            n = invoices.fix_missing_dates(conn)
-            set_setting(conn, "expense_dates_v1", True)
-        logging.getLogger("smartarchive").info("Datum ergänzt bei %s Positionen", n)
+            res = invoices.redetect_dates(conn)
+            set_setting(conn, "expense_dates_v2", True)
+        logging.getLogger("smartarchive").info("Datumserkennung erneuert: %s", res)
     except Exception:  # noqa: BLE001
         logging.getLogger("smartarchive").exception("Datumskorrektur fehlgeschlagen")

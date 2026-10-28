@@ -3,6 +3,7 @@ import { useLoad, usePoll, useToast } from "../lib";
 import { SuggestionBox } from "../components/Suggestion";
 import { InvoiceCard, needsInvoiceCard } from "../components/InvoiceCard";
 import { TxCard } from "../components/TxCard";
+import { DateQuestion } from "../components/DateQuestion";
 import { DocRow, Empty, ErrorBox, Icon, Loading } from "../components/ui";
 
 export default function Inbox({ onCapture }: { onCapture: () => void }) {
@@ -18,6 +19,7 @@ export default function Inbox({ onCapture }: { onCapture: () => void }) {
   const failed = data.pending.filter((d: any) => d.status === "error");
   const open = data.pending.filter((d: any) => d.status === "inbox");
   const auto = data.auto_filed;
+  const undated = data.undated || [];
 
   const retry = async (id: number) => {
     await post(`/api/documents/${id}/run/process`);
@@ -25,7 +27,7 @@ export default function Inbox({ onCapture }: { onCapture: () => void }) {
     reload();
   };
 
-  if (!failed.length && !open.length && !auto.length && !processing.length && !txs.open.length && !txs.auto.length) {
+  if (!failed.length && !open.length && !auto.length && !processing.length && !txs.open.length && !txs.auto.length && !undated.length) {
     return (
       <div className="page">
         <h1 className="page-title">Eingang</h1>
@@ -77,6 +79,20 @@ export default function Inbox({ onCapture }: { onCapture: () => void }) {
                 {!needsInvoiceCard(d) && !d.suggestion?.labels?.category && (
                   <div className="row-extra"><a className="secondary button" href={`#/dokument/${d.id}`}>Ablage wählen</a></div>
                 )}
+              </DocRow>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {undated.length > 0 && (
+        <section className="group">
+          <h2 className="group-title attention">Datum fehlt <span className="count">{undated.length}</span></h2>
+          <p className="hint">In diesen Belegen war kein Datum lesbar. Antippen öffnet den Beleg zum Nachsehen.</p>
+          <div className="doc-list">
+            {undated.map((d: any) => (
+              <DocRow key={d.id} doc={d}>
+                <DateQuestion docId={d.id} amount={d.expense?.amount_cents} onChanged={reload} compact />
               </DocRow>
             ))}
           </div>

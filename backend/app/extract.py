@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import re
-from datetime import date
+from datetime import date, timedelta
 
 MONTHS = {
     "januar": 1, "jan": 1, "februar": 2, "feb": 2, "märz": 3, "maerz": 3, "mär": 3, "april": 4, "apr": 4,
@@ -10,10 +10,30 @@ MONTHS = {
     "sept": 9, "oktober": 10, "okt": 10, "november": 11, "nov": 11, "dezember": 12, "dez": 12,
 }
 
-_DATE_NUM = re.compile(r"\b(\d{1,2})\.\s?(\d{1,2})\.\s?(\d{4}|\d{2})\b")
-_DATE_ISO = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
-_DATE_WORD = re.compile(r"\b(\d{1,2})\.\s?(" + "|".join(sorted(MONTHS, key=len, reverse=True)) + r")\.?\s+(\d{4})\b", re.I)
-_DATE_LABEL = re.compile(r"(rechnungsdatum|belegdatum|datum|ausstellungsdatum|bescheiddatum|vom)\s*[:.]?\s*$", re.I)
+_DATE_NUM = re.compile(r"(?<![\d.,/])(\d{1,2})\s?[./,-]\s?(\d{1,2})\s?[./,-]\s?(\d{4}|\d{2})(?![\d,]\d)")
+_DATE_ISO = re.compile(r"(?<!\d)(\d{4})-(\d{2})-(\d{2})(?!\d)")
+_DATE_WORD = re.compile(r"(?<!\d)(\d{1,2})\.?\s?(" + "|".join(sorted(MONTHS, key=len, reverse=True)) + r")\.?\s+(\d{4})(?!\d)", re.I)
+# Beschriftungen vor einem Datum und ihr Vorrang (höher = besser)
+_DATE_LABELS = [
+    (3, re.compile(r"(rechnungs\s?-?datum|re\.?-?datum|rg\.?-?datum|beleg\s?-?datum|ausstellungs\s?-?datum|bescheid\s?-?datum|"
+                   r"invoice\s+date)\W{0,6}$", re.I)),
+    (2, re.compile(r"(\bdatum|\bdate|\bvom|\bden)\W{0,6}$", re.I)),
+    (1, re.compile(r"(leistungs\s?-?datum|liefer\s?-?datum|leistungszeitraum)\W{0,6}$", re.I)),
+]
+# Daten, die nicht das Belegdatum sind (Fälligkeit, Laufzeit, Geburtstag)
+_DATE_AVOID = re.compile(r"(bis|fällig|faellig|zahlbar|gültig|gueltig|geb\.|geboren|ab|zum|spätestens|spaetestens|frist)\W{0,12}$", re.I)
+_OCR_DATE = re.compile(r"[0-9OoIl|]{1,2}\s?[.,/-]\s?[0-9OoIl|]{1,2}\s?[.,/-]\s?[0-9OoIl|]{2,4}")
+
+
+def _ocr_fix(text: str) -> str:
+    """Typische Lesefehler in datumsähnlichen Stellen ausgleichen (O->0, l/I/|->1). Länge bleibt gleich."""
+    def fix(m: re.Match[str]) -> str:
+        tok = m.group(0)
+        if sum(ch.isdigit() for ch in tok) < 3:
+            return tok
+        return tok.translate(str.maketrans({"O": "0", "o": "0", "I": "1", "l": "1", "|": "1"}))
+    return _OCR_DATE.sub(fix, text)
+
 
 _AMOUNT = re.compile(r"(?<![\d.,])(\d{1,3}(?:\.\d{3})+|\d+),(\d{2})(?!\d)\s*(?:€|eur|euro)?", re.I)
 _AMOUNT_LABEL = re.compile(
@@ -28,12 +48,13 @@ def _valid(y: int, m: int, d: int) -> date | None:
         dt = date(y, m, d)
     except ValueError:
         return None
-    if not (1990 <= dt.year <= date.today().year + 2):
+    if not (1990 <= dt.year) or dt > date.today() + timedelta(days=60):
         return None
     return dt
 
 
 def find_dates(text: str) -> list[tuple[date, int]]:
+    text = _ocr_fix(text)
     found: list[tuple[date, int]] = []
     for m in _DATE_NUM.finditer(text):
         dt = _valid(int(m.group(3)), int(m.group(2)), int(m.group(1)))
@@ -51,17 +72,30 @@ def find_dates(text: str) -> list[tuple[date, int]]:
 
 
 def detect_date(text: str) -> tuple[str | None, str]:
-    """Bevorzugt ein Datum hinter „Datum:“/„Rechnungsdatum“, sonst das erste im Kopfbereich."""
-    head = text[:4000]
-    dates = find_dates(head)
+    """Belegdatum aus dem erkannten Text.
+
+    Vorrang: beschriftete Daten („Rechnungsdatum“, „Datum“, „vom“ – auch in der Zeile davor), dann das erste
+    Datum im Kopfbereich. Fälligkeits- und Laufzeitdaten („zahlbar bis …“) werden gemieden.
+    """
+    fixed = _ocr_fix(text)
+    dates = find_dates(text)
     if not dates:
         return None, ""
+    best: tuple[tuple[int, int, int], date, int] | None = None
     for dt, pos in dates:
-        before = head[max(0, pos - 30):pos]
-        if _DATE_LABEL.search(before):
-            return dt.isoformat(), _line_at(head, pos)
-    dt, pos = dates[0]
-    return dt.isoformat(), _line_at(head, pos)
+        before = fixed[max(0, pos - 40):pos]
+        same_line = before.rsplit("\n", 1)[-1]
+        prio = 0
+        for p, pat in _DATE_LABELS:
+            if pat.search(same_line) or pat.search(before.rstrip()):
+                prio = p
+                break
+        avoid = bool(_DATE_AVOID.search(same_line)) and prio < 3
+        key = (0 if avoid else 1, prio, -pos)
+        if best is None or key > best[0]:
+            best = (key, dt, pos)
+    _, dt, pos = best
+    return dt.isoformat(), _line_at(fixed, pos)
 
 
 def parse_amount(raw_int: str, raw_dec: str) -> int:

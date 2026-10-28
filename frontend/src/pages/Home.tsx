@@ -9,7 +9,7 @@ export default function Home({ onCapture }: { onCapture: () => void }) {
   if (error) return <ErrorBox text={error} />;
   const c = data.counts;
   const exp = data.expenses;
-  const waiting = c.inbox + c.to_review + c.error + (c.transactions || 0);
+  const waiting = c.inbox + c.to_review + c.error + (c.transactions || 0) + (c.undated || 0);
 
   return (
     <div className="page home">
@@ -21,12 +21,13 @@ export default function Home({ onCapture }: { onCapture: () => void }) {
         <button className="primary capture" onClick={onCapture}><Icon name="camera" size={22} /> Beleg erfassen</button>
       </section>
 
-      {(c.inbox > 0 || c.to_review > 0 || c.error > 0 || c.processing > 0 || c.transactions > 0) && (
+      {(c.inbox > 0 || c.to_review > 0 || c.error > 0 || c.processing > 0 || c.transactions > 0 || c.undated > 0) && (
         <section className="status-strip">
           {c.processing > 0 && <a href="#/eingang" className="status"><strong>{c.processing}</strong> in Verarbeitung</a>}
           {c.inbox > 0 && <a href="#/eingang" className="status attention"><strong>{c.inbox}</strong> im Eingang</a>}
           {c.to_review > 0 && <a href="#/eingang" className="status"><strong>{c.to_review}</strong> automatisch abgelegt, ungeprüft</a>}
           {c.transactions > 0 && <a href="#/eingang" className="status"><strong>{c.transactions}</strong> Kontoumsätze zu prüfen</a>}
+          {c.undated > 0 && <a href="#/eingang" className="status"><strong>{c.undated}</strong> Belege ohne Datum</a>}
           {c.error > 0 && <a href="#/eingang" className="status danger"><strong>{c.error}</strong> Nacharbeit</a>}
         </section>
       )}

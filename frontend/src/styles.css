@@ -484,3 +484,8 @@ dialog.scanner::backdrop { background: #0b1013; }
 .missing-title { font-weight: 620; overflow-wrap: anywhere; }
 .muted.small { font-size: .84rem; }
 .status-pill.auto { background: var(--ochre-soft); color: var(--ochre); }
+.date-question { border-color: color-mix(in srgb, var(--ochre) 40%, transparent); background: color-mix(in srgb, var(--ochre-soft) 60%, var(--surface)); }
+.date-question .invoice-question { display: flex; align-items: center; gap: .4rem; }
+.date-row { display: flex; gap: .5rem; flex-wrap: wrap; }
+.date-row input { flex: 1 1 160px; }
+.warn-text { color: var(--ochre); }

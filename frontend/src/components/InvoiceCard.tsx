@@ -76,6 +76,10 @@ function InvoiceCardInner({ doc, onChanged, compact = false, meta }: CardProps &
     if (!area) return toast({ kind: "error", text: "Bitte zuerst wählen, wofür die Rechnung ist." });
     if (area === "vermietung" && properties.length > 0 && !propertyId) return toast({ kind: "error", text: "Bitte ein Mietobjekt wählen." });
     let cents: number | null = null;
+    if (area === "vermietung" && !invoiceDate && !paidOn) {
+      setEditing(true);
+      return toast({ kind: "error", text: "Kein Datum im Beleg erkannt – bitte das Rechnungsdatum eintragen." });
+    }
     if (area === "vermietung") {
       cents = amount.trim() ? parseMoney(amount) : null;
       if (amount.trim() && (cents === null || cents <= 0)) { setEditing(true); return toast({ kind: "error", text: "Betrag ist ungültig (z. B. 245,00)." }); }
@@ -150,7 +154,8 @@ function InvoiceCardInner({ doc, onChanged, compact = false, meta }: CardProps &
                     </select>
                     {inv.expense_reason && expCat === inv.expense_category && <span className="hint">Vorschlag ({inv.expense_reason})</span>}
                   </label>
-                  <label>Rechnungsdatum<input type="date" value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)} /></label>
+                  <label>Rechnungsdatum<input type="date" value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)} />
+                    {!invoiceDate && <span className="hint warn-text">Kein Datum im Beleg erkannt – bitte eintragen.</span>}</label>
                   <label>Bezahlt am<input type="date" value={paidOn} onChange={(e) => setPaidOn(e.target.value)} />
                     <span className="hint">bestimmt das Steuerjahr – leer lassen, wenn noch offen</span></label>
                   <label>Aussteller<input value={payee} onChange={(e) => setPayee(e.target.value)} maxLength={120} /></label>

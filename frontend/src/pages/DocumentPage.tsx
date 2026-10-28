@@ -3,6 +3,7 @@ import { centsToInput, date, del, get, money, parseMoney, patch, post, relative 
 import { go, useLoad, useMeta, usePoll, useToast } from "../lib";
 import { SuggestionBox } from "../components/Suggestion";
 import { InvoiceCard, needsInvoiceCard } from "../components/InvoiceCard";
+import { DateQuestion } from "../components/DateQuestion";
 import { AreaBadge, BackButton, CategorySelect, ErrorBox, Icon, Loading, sourceLabel } from "../components/ui";
 
 const ACTION_LABEL: Record<string, string> = {
@@ -103,6 +104,9 @@ export default function DocumentPage({ id }: { id: number }) {
             </div>
           )}
           {doc.status === "inbox" && !invoiceCard && !doc.suggestion?.labels?.category && <div className="notice attention">Im Eingang – bitte unten eine Ablage wählen.</div>}
+          {!doc.doc_date && !invoiceCard && doc.expenses.some((e: any) => !e.invoice_date && !e.paid_on) && (
+            <DateQuestion docId={id} amount={doc.expenses[0]?.amount_cents} onChanged={reload} />
+          )}
           {invoiceCard && <InvoiceCard doc={doc} onChanged={reload} />}
           {!invoiceCard && doc.suggestion && doc.status !== "processing" && (doc.suggestion.status === "open" || doc.suggestion.status === "applied" || doc.suggestion.status === "info") && !(doc.confirmed && doc.status === "filed") && (
             <SuggestionBox docId={id} status={doc.status} suggestion={doc.suggestion} onChanged={reload} />

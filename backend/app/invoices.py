@@ -157,8 +157,8 @@ def _proposal(conn: sqlite3.Connection, d: dict[str, Any]) -> dict[str, Any] | N
     doc_type = d["doc_type"] or payload.get("doc_type") or extract.detect_doc_type(text)
     if doc_type not in INVOICE_TYPES and doc_type != "Bescheid":
         return None
-    doc_date = (d["doc_date"] or payload.get("doc_date") or extract.detect_date(text)[0]
-                or extract.date_from_name(d.get("original_name"), d.get("source_path")))
+    # Datum nur aus dem erkannten Text – nie aus Titel oder Dateiname; fehlt es, fragt die App nach.
+    doc_date = d["doc_date"] or payload.get("doc_date") or extract.detect_date(text)[0]
     f = fields(text, doc_type, doc_date)
     f.update({k: v for k, v in inv.items() if v})  # Vorschlag aus der Einordnung (ggf. KI) hat Vorrang
     if doc_type == "Bescheid" and f.get("expense_category") not in _YEARLY_TAX:
@@ -241,15 +241,29 @@ def capture_all(conn: sqlite3.Connection, year: int | None = None, actor: str = 
 create_drafts = capture_all
 
 
-def fix_missing_dates(conn: sqlite3.Connection) -> int:
-    """Ergänzt das Rechnungsdatum automatisch erfasster Positionen ohne Datum aus Text bzw. Dateinamen."""
-    fixed = 0
-    for e in rows(conn.execute(
-            "SELECT e.id, e.document_id FROM expenses e JOIN documents d ON d.id = e.document_id "
-            "WHERE e.invoice_date IS NULL AND e.paid_on IS NULL AND d.doc_date IS NULL")):
-        d = row(conn.execute(_DOC_SELECT + " WHERE d.id = ?", (e["document_id"],)))
-        when = extract.detect_date(d.get("content") or "")[0] or extract.date_from_name(d.get("original_name"), d.get("source_path"))
-        if when:
-            conn.execute("UPDATE expenses SET invoice_date = ?, updated_at = ? WHERE id = ?", (when, now(), e["id"]))
-            fixed += 1
-    return fixed
+def redetect_dates(conn: sqlite3.Connection) -> dict[str, int]:
+    """Datum der Belege neu aus dem Text bestimmen (verbesserte Erkennung) und Datumsangaben, die nur aus dem
+    Dateinamen stammten, wieder entfernen. Betrifft nur automatisch erfasste Positionen und leere Dokumentdaten."""
+    set_doc = set_exp = cleared = 0
+    for d in rows(conn.execute(_DOC_SELECT + " WHERE d.deleted_at IS NULL")):
+        text_date = extract.detect_date(d.get("content") or "")[0]
+        name_date = extract.date_from_name(d.get("original_name"), d.get("source_path"))
+        if text_date and not d["doc_date"]:
+            conn.execute("UPDATE documents SET doc_date = ? WHERE id = ?", (text_date, d["id"]))
+            set_doc += 1
+        for e in rows(conn.execute("SELECT id, invoice_date FROM expenses WHERE document_id = ? AND origin = 'auto'", (d["id"],))):
+            if text_date and e["invoice_date"] != text_date and (e["invoice_date"] is None or e["invoice_date"] == name_date):
+                conn.execute("UPDATE expenses SET invoice_date = ?, updated_at = ? WHERE id = ?", (text_date, now(), e["id"]))
+                set_exp += 1
+            elif not text_date and name_date and e["invoice_date"] == name_date:
+                conn.execute("UPDATE expenses SET invoice_date = NULL, updated_at = ? WHERE id = ?", (now(), e["id"]))
+                cleared += 1
+    return {"dokumente": set_doc, "positionen": set_exp, "zurueckgesetzt": cleared}
+
+
+def undated(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Positionen ohne Datum (für die Rückfrage im Eingang)."""
+    return rows(conn.execute(
+        "SELECT e.id AS expense_id, e.amount_cents, e.payee, e.document_id, p.name AS property_name FROM expenses e "
+        "LEFT JOIN documents d ON d.id = e.document_id LEFT JOIN properties p ON p.id = e.property_id "
+        "WHERE e.paid_on IS NULL AND e.invoice_date IS NULL AND d.doc_date IS NULL AND d.deleted_at IS NULL ORDER BY e.id"))

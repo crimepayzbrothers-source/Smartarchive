@@ -132,7 +132,7 @@ export function DocRow({ doc, showArea = true, children }: { doc: DocItem; showA
         <div className="doc-main">
           <h3 className="doc-title"><Highlight parts={doc.title_hl} fallback={doc.title || "Ohne Titel"} /></h3>
           <p className="doc-meta">
-            {doc.status === "processing" ? <span className="processing-dot">Wird verarbeitet</span> : <span>{date(doc.doc_date || doc.created_at)}</span>}
+            {doc.status === "processing" ? <span className="processing-dot">Wird verarbeitet</span> : <span>{doc.doc_date ? date(doc.doc_date) : `hochgeladen ${date(doc.created_at)}`}</span>}
             {doc.correspondent_name && <span>{doc.correspondent_name}</span>}
             {doc.property_name && <span className="prop">{doc.property_name}</span>}
           </p>

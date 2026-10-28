@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from starlette.requests import Request
 from starlette.routing import Route
 
-from .. import config, exports
+from .. import config, exports, invoices
 from ..classify import category_paths
 from ..db import audit, get_setting, now, rows, set_setting, tx
 from ..seed import EXPENSE_CATEGORIES
@@ -57,7 +57,8 @@ async def dashboard(request: Request, conn, user):
     return {
         "counts": {"inbox": counts.get("inbox", 0), "processing": counts.get("processing", 0),
                    "error": counts.get("error", 0), "filed": counts.get("filed", 0), "to_review": to_review,
-                   "transactions": conn.execute("SELECT COUNT(*) FROM transactions WHERE status IN ('open','auto')").fetchone()[0]},
+                   "transactions": conn.execute("SELECT COUNT(*) FROM transactions WHERE status IN ('open','auto')").fetchone()[0],
+                   "undated": len(invoices.undated(conn))},
         "per_area": per_area,
         "recent": recent,
         "year": year,
