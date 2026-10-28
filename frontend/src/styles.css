@@ -422,3 +422,28 @@ table.positions { width: 100%; border-collapse: collapse; font-size: .9rem; }
 .invoice-form { margin-top: .3rem; }
 .suggestion .muted.small { font-size: .8rem; }
 .collapsible > .panel { border: 0; box-shadow: none; padding: .75rem 0 0; background: none; }
+
+/* --- Kontoumsätze ---------------------------------------------------------- */
+.tx-list { display: flex; flex-direction: column; gap: .6rem; }
+.tx-card { background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--ochre); border-radius: var(--radius-l); padding: .85rem .95rem; display: flex; flex-direction: column; gap: .5rem; box-shadow: var(--shadow); }
+.tx-card.applied { border-left-color: var(--vermietung); }
+.tx-head { display: flex; justify-content: space-between; align-items: flex-start; gap: .75rem; }
+.tx-main { display: flex; flex-direction: column; min-width: 0; }
+.tx-party { overflow-wrap: anywhere; }
+.tx-main .muted { font-size: .84rem; }
+.tx-amount { font-variant-numeric: tabular-nums; white-space: nowrap; font-size: 1.05rem; }
+.tx-amount.out { color: var(--danger); }
+.tx-amount.in { color: var(--ok); }
+.tx-purpose { text-align: left; font-size: .86rem; color: var(--ink-2); padding: 0; min-height: 0; background: none; border: 0; overflow-wrap: anywhere; }
+.tx-reason { display: flex; gap: .35rem; align-items: flex-start; font-size: .84rem; color: var(--ink-2); }
+.segmented.small { margin: 0; }
+.segmented.small label { padding: .4rem .3rem; font-size: .9rem; }
+.tx-candidates { display: flex; flex-direction: column; gap: .35rem; }
+.small-title { font-weight: 620; font-size: .9rem; }
+.candidate { display: flex; gap: .55rem; align-items: flex-start; padding: .55rem .65rem; border: 1px solid var(--line); border-radius: var(--radius); font-size: .9rem; cursor: pointer; }
+.candidate.on { border-color: var(--vermietung); background: var(--vermietung-soft); }
+.candidate input { margin-top: .2rem; }
+.panel.bank { display: flex; flex-direction: column; gap: .6rem; }
+.panel.bank > h2 { margin-bottom: 0; }
+.collapsible-inline summary { cursor: pointer; font-size: .9rem; color: var(--petrol-strong); }
+.steps { margin: .5rem 0 0 1.1rem; padding: 0; font-size: .9rem; display: flex; flex-direction: column; gap: .3rem; }

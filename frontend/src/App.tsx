@@ -69,7 +69,7 @@ function Shell({ user, onLogout }: { user: any; onLogout: () => void }) {
       if (files.length) { setShared(files); setCapture(true); }
     })();
   }, [path]);
-  const loadBadge = useCallback(() => get("/api/dashboard").then((d) => setBadge(d.counts.inbox + d.counts.to_review + d.counts.error)).catch(() => {}), []);
+  const loadBadge = useCallback(() => get("/api/dashboard").then((d) => setBadge(d.counts.inbox + d.counts.to_review + d.counts.error + (d.counts.transactions || 0))).catch(() => {}), []);
   useEffect(() => { loadBadge(); }, [loadBadge, path, refresh]);
   usePoll(true, loadBadge, 20000);
 

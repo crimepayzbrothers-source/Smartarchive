@@ -2,14 +2,17 @@ import { get, post } from "../api";
 import { useLoad, usePoll, useToast } from "../lib";
 import { SuggestionBox } from "../components/Suggestion";
 import { InvoiceCard, needsInvoiceCard } from "../components/InvoiceCard";
+import { TxCard } from "../components/TxCard";
 import { DocRow, Empty, ErrorBox, Icon, Loading } from "../components/ui";
 
 export default function Inbox({ onCapture }: { onCapture: () => void }) {
-  const { data, error, loading, reload } = useLoad(() => get("/api/inbox"), []);
+  const { data: both, error, loading, reload } = useLoad(() => Promise.all([get("/api/inbox"), get("/api/transactions/review")]), []);
+  const data: any = both?.[0];
+  const txs: any = both?.[1] || { open: [], auto: [] };
   const toast = useToast();
   const processing = data?.pending.filter((d: any) => d.status === "processing") || [];
   usePoll(processing.length > 0, reload);
-  if (loading && !data) return <Loading />;
+  if (loading && !both) return <Loading />;
   if (error) return <ErrorBox text={error} />;
 
   const failed = data.pending.filter((d: any) => d.status === "error");
@@ -22,7 +25,7 @@ export default function Inbox({ onCapture }: { onCapture: () => void }) {
     reload();
   };
 
-  if (!failed.length && !open.length && !auto.length && !processing.length) {
+  if (!failed.length && !open.length && !auto.length && !processing.length && !txs.open.length && !txs.auto.length) {
     return (
       <div className="page">
         <h1 className="page-title">Eingang</h1>
@@ -77,6 +80,22 @@ export default function Inbox({ onCapture }: { onCapture: () => void }) {
               </DocRow>
             ))}
           </div>
+        </section>
+      )}
+
+      {txs.open.length > 0 && (
+        <section className="group">
+          <h2 className="group-title attention">Umsätze klären <span className="count">{txs.open.length}</span></h2>
+          <p className="hint">Kontoumsätze, bei denen die App nachfragt. Ihre Antworten merkt sie sich für die nächsten Monate.</p>
+          <div className="tx-list">{txs.open.map((t: any) => <TxCard key={t.id} tx={t} onChanged={reload} />)}</div>
+        </section>
+      )}
+
+      {txs.auto.length > 0 && (
+        <section className="group">
+          <h2 className="group-title">Umsätze automatisch zugeordnet <span className="count">{txs.auto.length}</span></h2>
+          <p className="hint">„Passt“ bestätigt, „Rückgängig“ stellt den Umsatz zurück zur Klärung.</p>
+          <div className="tx-list">{txs.auto.map((t: any) => <TxCard key={t.id} tx={t} onChanged={reload} />)}</div>
         </section>
       )}
 

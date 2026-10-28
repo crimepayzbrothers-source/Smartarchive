@@ -67,6 +67,9 @@ def find_issues(conn: sqlite3.Connection, year: int | None = None) -> list[dict[
         if not e["property_id"]:
             issues.append({"kind": "objekt_fehlt", "expense_id": e["id"], "document_id": e["document_id"],
                            "text": f"{label}: kein Mietobjekt zugeordnet."})
+        if not e["document_id"] and e["category_key"] in ("erhaltung_sofort", "erhaltung_verteilt"):
+            issues.append({"kind": "beleg_fehlt", "expense_id": e["id"], "document_id": None,
+                           "text": f"{label}: nur aus dem Kontoumsatz erfasst – Rechnung hochladen."})
         if e["status"] == "ungeklaert":
             issues.append({"kind": "ungeklaert", "expense_id": e["id"], "document_id": e["document_id"],
                            "text": f"{label}: als ungeklärt markiert."})

@@ -243,6 +243,55 @@ MIGRATIONS: list[str] = [
     """
     ALTER TABLE expenses ADD COLUMN origin TEXT NOT NULL DEFAULT 'user';
     """,
+    # 4 – Kontoumsätze (CSV-Import), Abgleich mit Belegen
+    """
+    CREATE TABLE bank_accounts (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        iban TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL
+    );
+    CREATE TABLE bank_imports (
+        id INTEGER PRIMARY KEY,
+        account_id INTEGER NOT NULL REFERENCES bank_accounts(id) ON DELETE CASCADE,
+        filename TEXT NOT NULL DEFAULT '',
+        rows_total INTEGER NOT NULL DEFAULT 0,
+        rows_new INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL
+    );
+    CREATE TABLE transactions (
+        id INTEGER PRIMARY KEY,
+        account_id INTEGER NOT NULL REFERENCES bank_accounts(id) ON DELETE CASCADE,
+        import_id INTEGER REFERENCES bank_imports(id) ON DELETE SET NULL,
+        fingerprint TEXT NOT NULL UNIQUE,
+        booking_date TEXT NOT NULL,
+        value_date TEXT,
+        amount_cents INTEGER NOT NULL,              -- negativ = Ausgabe
+        currency TEXT NOT NULL DEFAULT 'EUR',
+        counterparty TEXT NOT NULL DEFAULT '',
+        counterparty_iban TEXT NOT NULL DEFAULT '',
+        creditor_id TEXT NOT NULL DEFAULT '',
+        purpose TEXT NOT NULL DEFAULT '',
+        booking_kind TEXT NOT NULL DEFAULT '',
+        party_key TEXT NOT NULL DEFAULT '',         -- Wiedererkennung: Gläubiger-ID, IBAN oder Name
+        status TEXT NOT NULL DEFAULT 'open',        -- open | auto | done
+        kind TEXT,                                  -- ausgabe | einnahme | ignoriert
+        property_id INTEGER REFERENCES properties(id) ON DELETE SET NULL,
+        unit_id INTEGER REFERENCES units(id) ON DELETE SET NULL,
+        category_key TEXT,
+        expense_id INTEGER REFERENCES expenses(id) ON DELETE SET NULL,
+        document_id INTEGER REFERENCES documents(id) ON DELETE SET NULL,
+        source TEXT,                                -- beleg | history | ai | keyword | user
+        confidence REAL,
+        reason TEXT NOT NULL DEFAULT '',
+        suggestion TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        decided_at TEXT
+    );
+    CREATE INDEX ix_tx_status ON transactions(status, booking_date);
+    CREATE INDEX ix_tx_party ON transactions(party_key, status);
+    """,
 ]
 
 

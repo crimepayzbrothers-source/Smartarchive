@@ -56,7 +56,8 @@ async def dashboard(request: Request, conn, user):
         "FROM documents d LEFT JOIN areas a ON a.id = d.area_id WHERE d.deleted_at IS NULL ORDER BY d.id DESC LIMIT 8"))
     return {
         "counts": {"inbox": counts.get("inbox", 0), "processing": counts.get("processing", 0),
-                   "error": counts.get("error", 0), "filed": counts.get("filed", 0), "to_review": to_review},
+                   "error": counts.get("error", 0), "filed": counts.get("filed", 0), "to_review": to_review,
+                   "transactions": conn.execute("SELECT COUNT(*) FROM transactions WHERE status IN ('open','auto')").fetchone()[0]},
         "per_area": per_area,
         "recent": recent,
         "year": year,

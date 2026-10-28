@@ -96,3 +96,42 @@ def classify_with_ai(prompt: str, timeout: float = 45) -> dict[str, Any]:
         return json.loads(content)
     except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
         raise AIError("Antwort der KI war kein gültiges JSON") from exc
+
+
+TX_SYSTEM_PROMPT = """Du ordnest Umsätze eines reinen Mietkontos zu. Antworte ausschließlich mit JSON.
+Regeln:
+- kind: "ausgabe" (Werbungskosten eines Mietobjekts), "einnahme" (Miete, Nebenkosten-Vorauszahlung) oder
+  "ignoriert" (Umbuchung zwischen eigenen Konten, Darlehensauszahlung, Kaution).
+- property_id nur, wenn der Text eindeutig ein gelistetes Objekt betrifft, sonst null.
+- category_key nur bei Ausgaben und nur aus der Liste.
+- Eine Darlehensrate enthält Tilgung: dann category_key "schuldzinsen" nur mit confidence unter 0.5.
+- confidence zwischen 0 und 1; reason ist ein kurzer Satz. Erfinde nichts."""
+
+
+def classify_transaction(tx: dict[str, Any], properties: list[dict[str, Any]], timeout: float = 30) -> dict[str, Any]:
+    """Vorschlag für einen Kontoumsatz. Gesendet werden Datum, Betrag, Zahlungspartner und Verwendungszweck – keine IBAN."""
+    from .seed import EXPENSE_CATEGORIES
+    cfg = config.settings
+    if not cfg.mistral_api_key:
+        raise AIError("Kein API-Schlüssel konfiguriert")
+    prop_lines = "\n".join(f"{p['id']}: {p['name']} – {p['address']}" for p in properties) or "(keine)"
+    exp_lines = "\n".join(f"{c['key']}: {c['label']}" for c in EXPENSE_CATEGORIES)
+    prompt = (
+        f"Mietobjekte (id: Name – Adresse):\n{prop_lines}\n\nAusgabenkategorien:\n{exp_lines}\n\n"
+        'Antwortformat: {"kind": "...", "property_id": "int|null", "category_key": "string|null", '
+        '"confidence": "float", "reason": "string"}\n\n'
+        f"Umsatz: {tx['booking_date']}, {tx['amount_cents'] / 100:.2f} EUR\n"
+        f"Zahlungspartner: {tx['counterparty']}\nVerwendungszweck: {tx['purpose'][:600]}"
+    )
+    body = json.dumps({"model": cfg.mistral_model, "temperature": 0, "response_format": {"type": "json_object"},
+                       "messages": [{"role": "system", "content": TX_SYSTEM_PROMPT}, {"role": "user", "content": prompt}]}).encode()
+    req = urllib.request.Request(cfg.mistral_base_url.rstrip("/") + "/chat/completions", data=body, method="POST",
+                                 headers={"Authorization": f"Bearer {cfg.mistral_api_key}", "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            payload = json.loads(resp.read().decode())
+        return json.loads(payload["choices"][0]["message"]["content"])
+    except urllib.error.HTTPError as exc:
+        raise AIError(f"Mistral antwortete mit HTTP {exc.code}") from exc
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
+        raise AIError(f"KI-Antwort nicht verwertbar: {exc}") from exc

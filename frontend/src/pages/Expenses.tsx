@@ -1,6 +1,6 @@
-import { useState } from "react";
-import { date, get, money } from "../api";
-import { useLoad, useMeta } from "../lib";
+import { useRef, useState } from "react";
+import { ApiError, date, get, money, post } from "../api";
+import { go, useLoad, useMeta, useToast } from "../lib";
 import { Empty, ErrorBox, Icon, Loading } from "../components/ui";
 
 export default function Expenses({ params }: { params: URLSearchParams }) {
@@ -54,6 +54,8 @@ export default function Expenses({ params }: { params: URLSearchParams }) {
           <p className="hint">Hinweise sind keine steuerliche Bewertung, sondern Auffälligkeiten zum Nachsehen.</p>
         </section>
       )}
+
+      <BankPanel />
 
       <section className="panel export">
         <h2>Export für die Steuererklärung {year}</h2>
@@ -119,5 +121,93 @@ function PositionTable({ items, labels }: { items: any[]; labels: Record<string,
         </tbody>
       </table>
     </div>
+  );
+}
+
+// Mietkonto: Umsätze als CSV aus dem Online-Banking einlesen.
+function BankPanel() {
+  const toast = useToast();
+  const { data: accounts, reload } = useLoad(() => get("/api/bank/accounts"), []);
+  const [accountId, setAccountId] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<any>(null);
+  const [name, setName] = useState("Mietkonto Commerzbank");
+  const fileRef = useRef<HTMLInputElement>(null);
+  if (!accounts) return null;
+  const selected = accountId ?? accounts[0]?.id ?? null;
+  const acc = accounts.find((a: any) => a.id === selected);
+
+  const create = async () => {
+    try {
+      await post("/api/bank/accounts", { name });
+      reload();
+    } catch (e: any) {
+      toast({ kind: "error", text: e.message });
+    }
+  };
+
+  const upload = async (file: File | undefined) => {
+    if (!file || !selected) return;
+    const form = new FormData();
+    form.append("account_id", String(selected));
+    form.append("file", file, file.name);
+    setBusy(true);
+    setResult(null);
+    try {
+      const res = await fetch("/api/bank/import", { method: "POST", body: form, headers: { "X-Requested-With": "SmartArchive" }, credentials: "same-origin" });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new ApiError(res.status, data?.error || `Fehler ${res.status}`, data);
+      setResult(data);
+      reload();
+    } catch (e: any) {
+      toast({ kind: "error", text: e.message });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="panel bank">
+      <h2><Icon name="euro" size={18} /> Mietkonto</h2>
+      {accounts.length === 0 ? (
+        <div className="form">
+          <p className="muted">Legen Sie Ihr Mietkonto an. Danach können Sie die Umsätze als CSV aus dem Online-Banking einlesen.</p>
+          <label>Bezeichnung<input value={name} onChange={(e) => setName(e.target.value)} maxLength={80} /></label>
+          <button className="primary" onClick={create}>Konto anlegen</button>
+        </div>
+      ) : (
+        <>
+          {accounts.length > 1 && (
+            <select value={selected ?? ""} onChange={(e) => setAccountId(Number(e.target.value))} aria-label="Konto">
+              {accounts.map((a: any) => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
+          )}
+          <p className="muted">
+            {acc?.name}: {acc?.range?.count ? `${acc.range.count} Umsätze vom ${date(acc.range.first)} bis ${date(acc.range.last)}` : "noch keine Umsätze"}
+          </p>
+          <input ref={fileRef} type="file" accept=".csv,text/csv,text/plain" hidden onChange={(e) => { upload(e.target.files?.[0]); e.target.value = ""; }} />
+          <button className="primary block" disabled={busy} onClick={() => fileRef.current?.click()}>
+            <Icon name="down" size={18} /> {busy ? "Wird eingelesen …" : "Umsätze einlesen (CSV)"}
+          </button>
+          {result && (
+            <div className="notice">
+              <span>{result.new} neue Umsätze ({date(result.from)} – {date(result.to)}){result.duplicates ? `, ${result.duplicates} schon vorhanden` : ""}.
+                {" "}{result.auto} automatisch zugeordnet, {result.open} zum Klären.</span>
+              {(result.auto + result.open) > 0 && <button className="secondary small" onClick={() => go("/eingang")}>Zum Eingang</button>}
+            </div>
+          )}
+          <details className="collapsible-inline">
+            <summary>So exportieren Sie die Umsätze bei der Commerzbank</summary>
+            <ol className="steps">
+              <li>Im Online-Banking (Browser) die Umsatzübersicht des Mietkontos öffnen.</li>
+              <li>Rechts über den Umsätzen auf „PDF / CSV“ tippen und den Umsatz-Export wählen.</li>
+              <li>Zeitraum wählen, Format <strong>CSV</strong>, „Exportieren“, Datei speichern.</li>
+              <li>Hier „Umsätze einlesen“ tippen und die Datei wählen. Doppelte Umsätze werden erkannt.</li>
+            </ol>
+            <p className="hint">Online-Banking zeigt bis zu 12 Monate. Am besten einmal im Monat einlesen.</p>
+          </details>
+        </>
+      )}
+    </section>
   );
 }
