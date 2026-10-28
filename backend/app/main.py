@@ -32,6 +32,7 @@ def init_db() -> None:
         seed(conn)
         _autofill_expenses(conn)
         _fix_dates(conn)
+        _assume_paid(conn)
     finally:
         conn.close()
 
@@ -154,3 +155,18 @@ def _fix_dates(conn) -> None:
         logging.getLogger("smartarchive").info("Datumserkennung erneuert: %s", res)
     except Exception:  # noqa: BLE001
         logging.getLogger("smartarchive").exception("Datumskorrektur fehlgeschlagen")
+
+
+def _assume_paid(conn) -> None:
+    """Einmalig: fehlendes Zahlungsdatum vorhandener Positionen = Rechnungsdatum (als „angenommen“ markiert)."""
+    from . import invoices
+    from .db import get_setting, set_setting, tx
+    if get_setting(conn, "paid_assumed_v1"):
+        return
+    try:
+        with tx(conn):
+            n = invoices.assume_payment_dates(conn)
+            set_setting(conn, "paid_assumed_v1", True)
+        logging.getLogger("smartarchive").info("Zahlungsdatum angenommen bei %s Positionen", n)
+    except Exception:  # noqa: BLE001
+        logging.getLogger("smartarchive").exception("Zahlungsdatum-Annahme fehlgeschlagen")

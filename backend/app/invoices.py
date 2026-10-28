@@ -175,10 +175,14 @@ def _proposal(conn: sqlite3.Connection, d: dict[str, Any]) -> dict[str, Any] | N
 
 def _insert(conn: sqlite3.Connection, d: dict[str, Any], prop: dict[str, Any], actor: str) -> int:
     ts = now()
+    # Zahlungsdatum: aus dem Beleg („bezahlt am …“, Barzahlung), sonst Rechnungsdatum als Annahme
+    paid_on, assumed = prop["paid_on"], 0
+    if not paid_on and prop["date"]:
+        paid_on, assumed = prop["date"], 1
     eid = conn.execute(
-        "INSERT INTO expenses(document_id, property_id, unit_id, invoice_date, paid_on, amount_cents, payee, category_key, note, "
-        "status, origin, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        (d["id"], d["property_id"], d["unit_id"], prop["date"], prop["paid_on"], prop["amount_cents"], prop["payee"],
+        "INSERT INTO expenses(document_id, property_id, unit_id, invoice_date, paid_on, paid_assumed, amount_cents, payee, "
+        "category_key, note, status, origin, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (d["id"], d["property_id"], d["unit_id"], prop["date"], paid_on, assumed, prop["amount_cents"], prop["payee"],
          prop["category_key"] or "sonstige", prop["note"], "bestaetigt", "auto", ts, ts)).lastrowid
     audit(conn, "expense_added", "document", d["id"],
           {"expense_id": eid, "betrag": f"{prop['amount_cents'] / 100:.2f}".replace(".", ",") + " €",
@@ -267,3 +271,12 @@ def undated(conn: sqlite3.Connection) -> list[dict[str, Any]]:
         "SELECT e.id AS expense_id, e.amount_cents, e.payee, e.document_id, p.name AS property_name FROM expenses e "
         "LEFT JOIN documents d ON d.id = e.document_id LEFT JOIN properties p ON p.id = e.property_id "
         "WHERE e.paid_on IS NULL AND e.invoice_date IS NULL AND d.doc_date IS NULL AND d.deleted_at IS NULL ORDER BY e.id"))
+
+
+def assume_payment_dates(conn: sqlite3.Connection) -> int:
+    """Einmalig für vorhandene Positionen: fehlendes Zahlungsdatum = Rechnungsdatum (als „angenommen“ markiert)."""
+    cur = conn.execute(
+        "UPDATE expenses SET paid_on = COALESCE(invoice_date, (SELECT doc_date FROM documents d WHERE d.id = expenses.document_id)), "
+        "paid_assumed = 1, updated_at = ? WHERE paid_on IS NULL AND origin != 'bank' "
+        "AND COALESCE(invoice_date, (SELECT doc_date FROM documents d WHERE d.id = expenses.document_id)) IS NOT NULL", (now(),))
+    return cur.rowcount

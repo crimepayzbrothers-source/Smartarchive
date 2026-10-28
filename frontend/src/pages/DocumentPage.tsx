@@ -357,6 +357,9 @@ function Expenses({ doc, onChanged }: { doc: any; onChanged: () => void }) {
       {doc.expenses.some((e: any) => e.origin === "auto") && (
         <p className="hint">Betrag automatisch aus dem Beleg ausgelesen – bitte kurz vergleichen und „Stimmt“ tippen oder korrigieren.</p>
       )}
+      {doc.expenses.some((e: any) => e.paid_assumed) && (
+        <p className="hint">Zahlungsdatum angenommen (= Rechnungsdatum). Weicht es ab, Position antippen und „Zahlungsdatum“ ändern.</p>
+      )}
       {doc.expenses.length === 0 && !editing && (
         <p className="muted">Noch keine Position. {sug.amount_cents ? `Erkannter Betrag: ${money(sug.amount_cents)}.` : ""}</p>
       )}
@@ -365,12 +368,12 @@ function Expenses({ doc, onChanged }: { doc: any; onChanged: () => void }) {
           <li key={e.id} className={`expense ${e.status}`}>
             <button className="expense-main" onClick={() => startEdit(e)}>
               <span className="expense-cat">{labels[e.category_key] || e.category_key}</span>
-              <span className="expense-meta">{e.paid_on ? `bezahlt ${date(e.paid_on)}` : "Zahlungsdatum fehlt"}{e.note ? `, ${e.note}` : ""}</span>
+              <span className="expense-meta">{e.paid_on ? `bezahlt ${date(e.paid_on)}${e.paid_assumed ? " (angenommen)" : ""}` : "Zahlungsdatum fehlt"}{e.note ? `, ${e.note}` : ""}</span>
             </button>
             <span className="expense-amount">{money(e.amount_cents)}</span>
             <span className={`status-pill ${e.origin === "auto" && e.status === "bestaetigt" ? "auto" : e.status}`}>
               {e.status !== "bestaetigt" ? (e.status === "ungeklaert" ? "Ungeklärt" : "Entwurf") : e.origin === "auto" ? "Automatisch" : "Geprüft"}</span>
-            {e.origin === "auto" && <button className="secondary small" onClick={() => check(e.id)}>Stimmt</button>}
+            {(e.origin === "auto" || e.paid_assumed) && <button className="secondary small" onClick={() => check(e.id)}>Stimmt</button>}
             <button className="icon-btn" aria-label="Löschen" onClick={() => remove(e.id)}><Icon name="trash" size={18} /></button>
           </li>
         ))}
@@ -386,7 +389,7 @@ function Expenses({ doc, onChanged }: { doc: any; onChanged: () => void }) {
           </label>
           <label>Rechnungsdatum<input type="date" value={editing.invoice_date || ""} onChange={(e) => setEditing({ ...editing, invoice_date: e.target.value })} /></label>
           <label>Zahlungsdatum<input type="date" value={editing.paid_on || ""} onChange={(e) => setEditing({ ...editing, paid_on: e.target.value })} />
-            <span className="hint">bestimmt das Steuerjahr</span></label>
+            <span className="hint">{editing.paid_assumed ? "angenommen (= Rechnungsdatum) – bei Abweichung ändern" : "bestimmt das Jahr"}</span></label>
           <label>Aussteller<input value={editing.payee} onChange={(e) => setEditing({ ...editing, payee: e.target.value })} /></label>
           <label>Status
             <select value={editing.status} onChange={(e) => setEditing({ ...editing, status: e.target.value })}>

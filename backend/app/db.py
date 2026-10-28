@@ -296,6 +296,10 @@ MIGRATIONS: list[str] = [
     """
     ALTER TABLE documents ADD COLUMN no_expense INTEGER NOT NULL DEFAULT 0;
     """,
+    # 6 – Zahlungsdatum angenommen (= Rechnungsdatum), bis Sie oder ein Kontoumsatz es bestätigen
+    """
+    ALTER TABLE expenses ADD COLUMN paid_assumed INTEGER NOT NULL DEFAULT 0;
+    """,
 ]
 
 

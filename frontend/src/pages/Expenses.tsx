@@ -126,7 +126,7 @@ function PositionTable({ items, labels }: { items: any[]; labels: Record<string,
         <tbody>
           {items.map((e) => (
             <tr key={e.id} onClick={() => e.document_id && (window.location.hash = `/dokument/${e.document_id}`)} className={e.document_id ? "clickable" : ""}>
-              <td>{e.paid_on ? date(e.paid_on) : <span className="muted">fehlt</span>}</td>
+              <td>{e.paid_on ? <>{date(e.paid_on)}{e.paid_assumed ? <span className="muted"> (angen.)</span> : null}</> : <span className="muted">fehlt</span>}</td>
               <td>{e.payee || e.document_title}</td>
               <td>{labels[e.category_key] || e.category_key}</td>
               <td>{e.property_name || "–"}</td>

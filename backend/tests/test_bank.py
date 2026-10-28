@@ -82,11 +82,13 @@ def test_payment_matches_invoice_and_sets_payment_date(client):
     # „Rückgängig“: Zahlungsdatum wieder leer, Umsatz offen (nicht sofort wieder automatisch)
     t = client.post(f"/api/transactions/{t['id']}/undo", headers=HEADERS).json()
     assert t["status"] == "open" and t["candidates"][0]["id"] == e["id"]
-    assert client.get(f"/api/documents/{doc}").json()["expenses"][0]["paid_on"] is None
+    e_undo = client.get(f"/api/documents/{doc}").json()["expenses"][0]
+    assert (e_undo["paid_on"], e_undo["paid_assumed"]) == ("2026-10-14", 1)  # wieder die Annahme (= Rechnungsdatum)
     # Bestätigen mit Verknüpfung
     t = client.post(f"/api/transactions/{t['id']}/decide", json={"kind": "ausgabe", "expense_id": e["id"]}, headers=HEADERS).json()
     assert t["status"] == "done" and t["expense_id"] == e["id"]
-    assert client.get(f"/api/documents/{doc}").json()["expenses"][0]["paid_on"] == "2026-10-20"
+    e_done = client.get(f"/api/documents/{doc}").json()["expenses"][0]
+    assert (e_done["paid_on"], e_done["paid_assumed"]) == ("2026-10-20", 0)
 
     # erneuter Import derselben Datei: nichts doppelt
     res = _import(client, acc, cb_csv([

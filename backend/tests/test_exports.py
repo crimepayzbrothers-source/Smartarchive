@@ -49,7 +49,7 @@ def test_csv_is_chronological_with_month_year_and_beleg_nr(client):
     assert [r[2] for r in body] == ["02.01.2026", "15.02.2026", "25.03.2026", "02.04.2026"]  # chronologisch, Entwurf fehlt
     assert [r[3] for r in body] == ["01/2026", "02/2026", "03/2026", "04/2026"]
     assert [r[1] for r in body] == ["1", "ohne Beleg", "2", "3"]  # Belegnummern in Reihenfolge
-    assert [r[7] for r in body] == ["Rechnung", "Zahlung", "Zahlung", "Zahlung"]
+    assert [r[7] for r in body] == ["Zahlung (angenommen)", "Zahlung", "Zahlung", "Zahlung"]
     assert body[0][-1] == str(docs[1]) and body[3][12] == "300,00"
 
 

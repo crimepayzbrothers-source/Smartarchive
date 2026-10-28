@@ -224,7 +224,7 @@ def expense_candidates(conn: sqlite3.Connection, tx: dict[str, Any]) -> list[dic
     cands = rows(conn.execute(
         "SELECT e.*, d.title AS document_title, p.name AS property_name FROM expenses e "
         "LEFT JOIN documents d ON d.id = e.document_id LEFT JOIN properties p ON p.id = e.property_id "
-        "WHERE e.amount_cents = ? AND (e.paid_on IS NULL OR e.id = ?) AND e.origin != 'bank' "
+        "WHERE e.amount_cents = ? AND (e.paid_on IS NULL OR e.paid_assumed = 1 OR e.id = ?) AND e.origin != 'bank' "
         "AND (e.invoice_date IS NULL OR e.invoice_date BETWEEN date(?, '-200 days') AND date(?, '+5 days')) "
         "AND e.id NOT IN (SELECT expense_id FROM transactions WHERE expense_id IS NOT NULL AND id != ?) ORDER BY e.id",
         (-tx["amount_cents"], tx.get("expense_id") or -1, tx["booking_date"], tx["booking_date"], tx["id"])))
@@ -351,7 +351,9 @@ def _release_expense(conn: sqlite3.Connection, tx: dict[str, Any], sug: dict[str
     if e["origin"] == "bank":
         conn.execute("DELETE FROM expenses WHERE id = ?", (e["id"],))
     elif sug.get("paid_on_set") and e["paid_on"] == tx["booking_date"]:
-        conn.execute("UPDATE expenses SET paid_on = NULL, updated_at = ? WHERE id = ?", (now(), e["id"]))
+        prev, prev_assumed = sug.get("paid_prev") or (None, 0)
+        conn.execute("UPDATE expenses SET paid_on = ?, paid_assumed = ?, updated_at = ? WHERE id = ?",
+                     (prev, prev_assumed, now(), e["id"]))
 
 
 def auto_apply(conn: sqlite3.Connection, tx: dict[str, Any], sug: dict[str, Any]) -> str:
@@ -362,8 +364,10 @@ def auto_apply(conn: sqlite3.Connection, tx: dict[str, Any], sug: dict[str, Any]
     fields: dict[str, Any] = {}
     if conf >= threshold and sug.get("source") == "beleg" and sug.get("expense_id"):
         e = row(conn.execute("SELECT * FROM expenses WHERE id = ?", (sug["expense_id"],)))
-        if e["paid_on"] is None:
-            conn.execute("UPDATE expenses SET paid_on = ?, updated_at = ? WHERE id = ?", (tx["booking_date"], now(), e["id"]))
+        if e["paid_on"] is None or e["paid_assumed"]:
+            sug["paid_prev"] = [e["paid_on"], e["paid_assumed"]]
+            conn.execute("UPDATE expenses SET paid_on = ?, paid_assumed = 0, updated_at = ? WHERE id = ?",
+                         (tx["booking_date"], now(), e["id"]))
             sug["paid_on_set"] = True
         fields = {"kind": "ausgabe", "expense_id": e["id"], "document_id": e["document_id"], "property_id": e["property_id"],
                   "unit_id": e["unit_id"], "category_key": e["category_key"]}
@@ -471,8 +475,10 @@ def decide(conn: sqlite3.Connection, tx_id: int, data: dict[str, Any]) -> dict[s
             if tx["expense_id"] and tx["expense_id"] != link:
                 _release_expense(conn, tx, sug)
             if e["paid_on"] != tx["booking_date"]:
-                sug["paid_on_set"] = e["paid_on"] is None or sug.get("paid_on_set", False)
-            conn.execute("UPDATE expenses SET paid_on = ?, status = 'bestaetigt', updated_at = ? WHERE id = ?",
+                if e["paid_on"] is None or e["paid_assumed"]:
+                    sug["paid_prev"] = [e["paid_on"], e["paid_assumed"]]
+                sug["paid_on_set"] = e["paid_on"] is None or bool(e["paid_assumed"]) or sug.get("paid_on_set", False)
+            conn.execute("UPDATE expenses SET paid_on = ?, paid_assumed = 0, status = 'bestaetigt', updated_at = ? WHERE id = ?",
                          (tx["booking_date"], now(), link))
             fields.update({"expense_id": link, "document_id": e["document_id"], "property_id": e["property_id"],
                            "unit_id": e["unit_id"], "category_key": e["category_key"]})

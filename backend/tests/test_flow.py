@@ -96,7 +96,8 @@ def test_digital_invoice_suggestion_accept_and_search(client):
     e = exps[0]
     assert (e["amount_cents"], e["status"], e["origin"], e["property_id"]) == (24500, "bestaetigt", "auto", pid)
     assert e["category_key"] == "heizung" and e["invoice_date"] == "2026-10-27" and e["note"] == "Rechnung Nr. 2026-1041"
-    assert e["paid_on"] is None  # „Zahlbar innerhalb …“ ist kein Zahlungsdatum
+    # „Zahlbar innerhalb …“ ist kein Zahlungsdatum -> Rechnungsdatum wird angenommen
+    assert (e["paid_on"], e["paid_assumed"]) == ("2026-10-27", 1)
 
     # sprechender Dateiname (Original bleibt unverändert)
     name = client.get(f"/api/documents/{doc_id}").json()["display_filename"]
@@ -186,9 +187,9 @@ def test_expenses_summary_issues_and_exports(client):
                                        "payee": "Heizungsbau Mueller", "invoice_date": "2026-10-27", "status": "entwurf"}, headers=HEADERS)
     s = client.get("/api/expenses/summary", params={"year": 2026}).json()
     # Position ohne Zahlungsdatum zählt nach Rechnungsdatum zum Jahr
-    assert s["total"] == 24500 and s["confirmed"] == 20588 and s["open_payment_count"] == 1
+    assert s["total"] == 24500 and s["confirmed"] == 20588 and s["open_payment_count"] == 0
     kinds = {i["kind"] for i in s["issues"]}
-    assert "zahlung_offen" in kinds and "anschaffungsnah" in kinds
+    assert "zahlung_angenommen" in kinds and "anschaffungsnah" in kinds
 
     xlsx = client.get("/api/export/expenses.xlsx", params={"year": 2026})
     assert xlsx.status_code == 200

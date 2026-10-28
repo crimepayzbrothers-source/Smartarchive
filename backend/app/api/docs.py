@@ -409,9 +409,11 @@ async def assign_invoice(request: Request, conn, user):
         expense_id = None
         if rental:
             if data.amount_cents and data.expense_category:
+                assumed = not data.paid_on and bool(data.invoice_date)
                 values = {"property_id": property_id, "unit_id": unit_id, "amount_cents": data.amount_cents,
                           "category_key": data.expense_category, "invoice_date": data.invoice_date or None,
-                          "paid_on": data.paid_on or None, "payee": (data.payee or "").strip(),
+                          "paid_on": data.paid_on or data.invoice_date or None, "paid_assumed": int(assumed),
+                          "payee": (data.payee or "").strip(),
                           "note": (data.note or "").strip(), "status": "bestaetigt"}
                 drafts = rows(conn.execute("SELECT id FROM expenses WHERE document_id = ? AND origin = 'auto' ORDER BY id", (doc_id,)))
                 others = conn.execute("SELECT COUNT(*) FROM expenses WHERE document_id = ? AND origin != 'auto'", (doc_id,)).fetchone()[0]
@@ -450,6 +452,8 @@ async def set_date(request: Request, conn, user):
     with tx(conn):
         documents.apply_fields(conn, doc_id, {"doc_date": data.date})
         conn.execute("UPDATE expenses SET invoice_date = ?, updated_at = ? WHERE document_id = ? AND invoice_date IS NULL",
+                     (data.date, now(), doc_id))
+        conn.execute("UPDATE expenses SET paid_on = ?, paid_assumed = 1, updated_at = ? WHERE document_id = ? AND paid_on IS NULL",
                      (data.date, now(), doc_id))
         documents.index_document(conn, doc_id)
     return detail(conn, doc_id)

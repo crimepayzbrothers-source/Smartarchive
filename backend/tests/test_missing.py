@@ -47,9 +47,9 @@ def test_import_captures_and_lists_leftovers(client):
 
     s = client.get("/api/expenses/summary", params={"year": 2026}).json()
     assert s["confirmed"] == 24500 + 49380 and s["auto_count"] == 2
-    assert any(i["kind"] == "zahlung_offen" and i["count"] == 2 for i in s["issues"])
+    assert any(i["kind"] == "zahlung_angenommen" and i["count"] == 2 for i in s["issues"])
     csv_text = client.get("/api/export/expenses.csv", params={"year": 2026}).content.decode("utf-8-sig")
-    assert "automatisch ausgelesen" in csv_text and ";Rechnung;" in csv_text
+    assert "automatisch ausgelesen" in csv_text and ";Zahlung (angenommen);" in csv_text
 
 
 def test_autofill_on_start_for_existing_documents(client):
@@ -134,3 +134,37 @@ def test_scanned_photo_date_found(client):
     doc = r.json()["created"][0]
     run_worker()
     assert client.get(f"/api/documents/{doc}").json()["doc_date"] == "2026-10-20"
+
+
+def test_assumed_payment_date_and_correction(client):
+    """Ohne Zahlungsdatum im Beleg gilt das Rechnungsdatum – als „angenommen“, jederzeit korrigierbar."""
+    pid = _prop(client)
+    doc = _imported(client, "r.pdf", ["Maler GmbH", "Rechnungsdatum: 12.11.2025", "Gesamtbetrag 300,00 EUR"], pid)
+    cash = _imported(client, "bon.pdf", ["Baumarkt GmbH", "Kassenbon", "Datum 03.03.2026", "SUMME 19,99", "BAR 20,00"], pid)
+    run_worker()
+    e = client.get(f"/api/documents/{doc}").json()["expenses"][0]
+    assert (e["invoice_date"], e["paid_on"], e["paid_assumed"]) == ("2025-11-12", "2025-11-12", 1)
+    c = client.get(f"/api/documents/{cash}").json()["expenses"][0]
+    assert (c["paid_on"], c["paid_assumed"]) == ("2026-03-03", 0)  # Barzahlung laut Beleg: nicht angenommen
+    # tatsächlich im Januar bezahlt -> korrigieren; zählt dann zu 2026
+    e = client.patch(f"/api/expenses/{e['id']}", json={"paid_on": "2026-01-08"}, headers=HEADERS).json()
+    assert (e["paid_on"], e["paid_assumed"]) == ("2026-01-08", 0)
+    assert client.get("/api/expenses/summary", params={"year": 2026}).json()["total"] == 30000 + 1999
+    assert client.get("/api/expenses/summary", params={"year": 2025}).json()["total"] == 0
+
+
+def test_assume_for_existing_positions(client):
+    from app import invoices
+    from app.db import connect
+    pid = _prop(client)
+    doc = _imported(client, "r.pdf", ["Maler GmbH", "Rechnungsdatum: 12.11.2025", "Gesamtbetrag 300,00 EUR"], pid)
+    run_worker()
+    conn = connect()
+    conn.execute("UPDATE expenses SET paid_on = NULL, paid_assumed = 0")  # Stand vor dem Update
+    assert invoices.assume_payment_dates(conn) == 1
+    conn.close()
+    e = client.get(f"/api/documents/{doc}").json()["expenses"][0]
+    assert (e["paid_on"], e["paid_assumed"]) == ("2025-11-12", 1)
+    # „Stimmt“ bestätigt auch das Zahlungsdatum
+    e = client.patch(f"/api/expenses/{e['id']}", json={}, headers=HEADERS).json()
+    assert e["paid_assumed"] == 0

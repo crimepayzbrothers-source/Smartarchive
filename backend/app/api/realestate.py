@@ -174,6 +174,8 @@ async def create_expense(request: Request, conn, user):
         if prop and prop[0]:
             fields["property_id"] = prop[0]
     fields.setdefault("status", "entwurf")
+    if not fields.get("paid_on") and fields.get("invoice_date"):  # Zahlungsdatum annehmen, bis Sie widersprechen
+        fields["paid_on"], fields["paid_assumed"] = fields["invoice_date"], 1
     fields["created_at"] = fields["updated_at"] = now()
     with tx(conn):
         eid = conn.execute(f"INSERT INTO expenses({', '.join(fields)}) VALUES({', '.join('?' * len(fields))})",
@@ -192,14 +194,15 @@ async def update_expense(request: Request, conn, user):
     if not before:
         raise KeyError(eid)
     fields = {k: v for k, v in data.model_dump(exclude_unset=True).items() if before.get(k) != v}
-    if not fields and before["origin"] == "auto":  # „Stimmt“ ohne Änderung: als geprüft markieren
+    if not fields and (before["origin"] == "auto" or before["paid_assumed"]):  # „Stimmt“: geprüft, Datum bestätigt
         with tx(conn):
-            conn.execute("UPDATE expenses SET origin = 'user', updated_at = ? WHERE id = ?", (now(), eid))
+            conn.execute("UPDATE expenses SET origin = CASE WHEN origin = 'auto' THEN 'user' ELSE origin END, paid_assumed = 0, "
+                         "updated_at = ? WHERE id = ?", (now(), eid))
             audit(conn, "checked", "expense", eid, {})
     if fields:
         with tx(conn):
             conn.execute(f"UPDATE expenses SET {', '.join(k + ' = ?' for k in fields)}, origin = CASE WHEN origin = 'auto' "
-                         f"THEN 'user' ELSE origin END, updated_at = ? WHERE id = ?", (*fields.values(), now(), eid))
+                         f"THEN 'user' ELSE origin END, paid_assumed = 0, updated_at = ? WHERE id = ?", (*fields.values(), now(), eid))
             audit(conn, "updated", "expense", eid, {k: {"vorher": before.get(k), "nachher": v} for k, v in fields.items()})
     return row(conn.execute("SELECT * FROM expenses WHERE id = ?", (eid,)))
 

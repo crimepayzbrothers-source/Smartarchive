@@ -33,7 +33,9 @@ ORIGIN_LABEL = {"auto": "automatisch ausgelesen", "user": "geprüft", "bank": "a
 
 
 def year_basis(e: dict[str, Any]) -> str:
-    return "Zahlung" if e.get("paid_on") else "Rechnung"
+    if e.get("paid_on"):
+        return "Zahlung (angenommen)" if e.get("paid_assumed") else "Zahlung"
+    return "Rechnung"
 
 
 def expense_rows(conn: sqlite3.Connection, year: int | None = None, property_id: int | None = None,
@@ -96,6 +98,12 @@ def find_issues(conn: sqlite3.Connection, year: int | None = None) -> list[dict[
         issues.append({"kind": "zahlung_offen", "count": len(unpaid),
                        "text": f"{len(unpaid)} Position(en) ohne Zahlungsdatum – dem Jahr nach Rechnungsdatum zugeordnet. "
                                "Kontoumsätze einlesen trägt das Datum automatisch ein."})
+    assumed = conn.execute(f"SELECT COUNT(*) FROM expenses e LEFT JOIN documents d ON d.id = e.document_id "
+                           f"WHERE {cond} AND e.paid_assumed = 1", params).fetchone()[0]
+    if assumed:
+        issues.append({"kind": "zahlung_angenommen", "count": assumed,
+                       "text": f"{assumed} Zahlungsdatum/-daten angenommen (= Rechnungsdatum). Bei Abweichung am Beleg korrigieren "
+                               "oder Kontoumsätze einlesen – das ersetzt die Annahme automatisch."})
     # mögliche Dubletten: gleicher Betrag + gleicher Aussteller, Datum höchstens 10 Tage auseinander
     dups = rows(conn.execute(
         "SELECT a.id AS a_id, b.id AS b_id, a.document_id AS a_doc, b.document_id AS b_doc, a.payee, a.amount_cents "

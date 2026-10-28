@@ -157,7 +157,7 @@ function InvoiceCardInner({ doc, onChanged, compact = false, meta }: CardProps &
                   <label>Rechnungsdatum<input type="date" value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)} />
                     {!invoiceDate && <span className="hint warn-text">Kein Datum im Beleg erkannt – bitte eintragen.</span>}</label>
                   <label>Bezahlt am<input type="date" value={paidOn} onChange={(e) => setPaidOn(e.target.value)} />
-                    <span className="hint">bestimmt das Steuerjahr – leer lassen, wenn noch offen</span></label>
+                    <span className="hint">leer = Rechnungsdatum (angenommen, später änderbar)</span></label>
                   <label>Aussteller<input value={payee} onChange={(e) => setPayee(e.target.value)} maxLength={120} /></label>
                   <label>Notiz<input value={note} onChange={(e) => setNote(e.target.value)} maxLength={200} /></label>
                 </>
@@ -185,7 +185,7 @@ function InvoiceCardInner({ doc, onChanged, compact = false, meta }: CardProps &
               <>
                 <dt>Betrag</dt><dd>{amount ? money(parseMoney(amount)) : "nicht erkannt"}</dd>
                 <dt>Kategorie</dt><dd>{expLabel || "bitte wählen"}</dd>
-                <dt>Bezahlt</dt><dd>{paidOn ? date(paidOn) : "noch offen"}</dd>
+                <dt>Bezahlt</dt><dd>{paidOn ? date(paidOn) : invoiceDate ? `${date(invoiceDate)} (angenommen)` : "–"}</dd>
               </>
             )}
           </dl>
