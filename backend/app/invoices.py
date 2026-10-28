@@ -173,7 +173,8 @@ def _proposal(conn: sqlite3.Connection, d: dict[str, Any]) -> dict[str, Any] | N
     }
 
 
-def _insert(conn: sqlite3.Connection, d: dict[str, Any], prop: dict[str, Any], actor: str) -> int:
+def _insert(conn: sqlite3.Connection, d: dict[str, Any], prop: dict[str, Any], actor: str, status: str = "bestaetigt",
+            property_id: int | None | str = "doc") -> int:
     ts = now()
     # Zahlungsdatum: aus dem Beleg („bezahlt am …“, Barzahlung), sonst Rechnungsdatum als Annahme
     paid_on, assumed = prop["paid_on"], 0
@@ -182,8 +183,9 @@ def _insert(conn: sqlite3.Connection, d: dict[str, Any], prop: dict[str, Any], a
     eid = conn.execute(
         "INSERT INTO expenses(document_id, property_id, unit_id, invoice_date, paid_on, paid_assumed, amount_cents, payee, "
         "category_key, note, status, origin, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        (d["id"], d["property_id"], d["unit_id"], prop["date"], paid_on, assumed, prop["amount_cents"], prop["payee"],
-         prop["category_key"] or "sonstige", prop["note"], "bestaetigt", "auto", ts, ts)).lastrowid
+        (d["id"], d["property_id"] if property_id == "doc" else property_id, d["unit_id"] if property_id == "doc" else None,
+         prop["date"], paid_on, assumed, prop["amount_cents"], prop["payee"],
+         prop["category_key"] or "sonstige", prop["note"], status, "auto", ts, ts)).lastrowid
     audit(conn, "expense_added", "document", d["id"],
           {"expense_id": eid, "betrag": f"{prop['amount_cents'] / 100:.2f}".replace(".", ",") + " €",
            "automatisch_ausgelesen": True, "beleg": prop.get("amount_evidence")}, actor=actor)
@@ -197,8 +199,21 @@ def ensure_expense(conn: sqlite3.Connection, document_id: int, actor: str = "sys
     nicht als „keine Ausgabe“ markiert.
     """
     d = row(conn.execute(_DOC_SELECT + " WHERE d.id = ?", (document_id,)))
-    if (not d or d["area_key"] != "vermietung" or not d["property_id"] or d["status"] != "filed"
-            or d["deleted_at"] or d["no_expense"]):
+    if not d or d["deleted_at"] or d["status"] != "filed":
+        return None
+    if d["area_key"] != "vermietung" or d["no_expense"]:
+        # privat abgelegt oder „keine Ausgabe“: beim Upload vorläufig erfasster Betrag entfällt
+        conn.execute("DELETE FROM expenses WHERE document_id = ? AND origin = 'auto'", (document_id,))
+        return None
+    pending = row(conn.execute("SELECT id FROM expenses WHERE document_id = ? AND origin = 'auto' AND status = 'entwurf' "
+                               "ORDER BY id LIMIT 1", (document_id,)))
+    if pending and d["property_id"]:
+        # vorläufig erfasster Betrag: jetzt Objekt übernehmen und zählen
+        conn.execute("UPDATE expenses SET property_id = ?, unit_id = COALESCE(?, unit_id), status = 'bestaetigt', updated_at = ? "
+                     "WHERE id = ?", (d["property_id"], d["unit_id"], now(), pending["id"]))
+        audit(conn, "expense_assigned", "document", document_id, {"expense_id": pending["id"]}, actor=actor)
+        return pending["id"]
+    if not d["property_id"]:
         return None
     if conn.execute("SELECT 1 FROM expenses WHERE document_id = ? LIMIT 1", (document_id,)).fetchone():
         return None
@@ -206,6 +221,31 @@ def ensure_expense(conn: sqlite3.Connection, document_id: int, actor: str = "sys
     if not prop or not prop["amount_cents"]:
         return None
     return _insert(conn, d, prop, actor)
+
+
+def capture_on_upload(conn: sqlite3.Connection, document_id: int, payload: dict[str, Any]) -> int | None:
+    """Sofort beim Upload: erkannter Rechnungsbetrag wird als Ausgabe erfasst – auch wenn der Beleg noch im
+    Eingang liegt (z. B. Objekt unklar). Bis zur Zuordnung ist die Position ein Entwurf; mit der Ablage im
+    Bereich Vermietung zählt sie, bei „Privat“ entfällt sie.
+    """
+    d = row(conn.execute(_DOC_SELECT + " WHERE d.id = ?", (document_id,)))
+    if not d or d["deleted_at"] or d["no_expense"]:
+        return None
+    if conn.execute("SELECT 1 FROM expenses WHERE document_id = ? LIMIT 1", (document_id,)).fetchone():
+        return None
+    area = d["area_key"]
+    if not area and payload.get("area_id"):
+        r = conn.execute("SELECT key FROM areas WHERE id = ?", (payload["area_id"],)).fetchone()
+        area = r[0] if r else None
+    upload_area = conn.execute("SELECT upload_area FROM documents WHERE id = ?", (document_id,)).fetchone()[0]
+    if area == "privat" or (area is None and upload_area == "privat"):
+        return None
+    if area != "vermietung" and upload_area != "vermietung" and not payload.get("property_id"):
+        return None  # weder Bereich noch Objekt deuten auf Vermietung
+    prop = _proposal(conn, d)
+    if not prop or not prop["amount_cents"]:
+        return None
+    return _insert(conn, d, prop, "system", status="entwurf", property_id=payload.get("property_id"))
 
 
 # frühere Bezeichnung (Aufrufer aus älteren Teilen)

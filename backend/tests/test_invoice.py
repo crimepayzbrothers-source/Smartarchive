@@ -74,7 +74,10 @@ def test_invoice_without_property_asks_and_files_with_expense(client):
     doc_id = _upload(client, "scan.pdf", make_pdf(INVOICE_NO_ADDRESS))
     run_worker()
     d = client.get(f"/api/documents/{doc_id}").json()
-    assert d["status"] == "inbox" and d["expenses"] == []
+    # Betrag sofort erfasst, obwohl das Objekt noch unklar ist (Entwurf, zählt noch nicht)
+    assert d["status"] == "inbox"
+    assert [(e["amount_cents"], e["status"], e["property_id"], e["origin"]) for e in d["expenses"]] == [(14500, "entwurf", None, "auto")]
+    draft_id = d["expenses"][0]["id"]
     inv = d["suggestion"]["payload"]["invoice"]
     assert inv["payee"] == "Sanitaer Schmidt"
     assert inv["number"] == "RE-2026/0815" and inv["amount_cents"] == 14500 and inv["expense_category"] == "erhaltung_sofort"
@@ -94,6 +97,7 @@ def test_invoice_without_property_asks_and_files_with_expense(client):
     assert len(d["expenses"]) == 1
     e = d["expenses"][0]
     assert (e["status"], e["amount_cents"], e["paid_on"], e["origin"]) == ("bestaetigt", 14500, "2026-10-20", "user")
+    assert e["id"] == draft_id and e["property_id"] == p1  # derselbe Datensatz, jetzt mit Objekt
 
     # zweimal absenden legt keine zweite Position an
     d = client.post(f"/api/documents/{doc_id}/invoice", json=body, headers=HEADERS).json()
@@ -180,3 +184,40 @@ def test_import_captures_expense_automatically(client):
     # „Stimmt“ ohne Änderung -> geprüft
     eid = d["expenses"][0]["id"]
     assert client.patch(f"/api/expenses/{eid}", json={}, headers=HEADERS).json()["origin"] == "user"
+
+
+
+def test_upload_captures_amount_immediately_then_private_or_undo(client):
+    p1 = _prop(client, "Hauptstraße 15", "Hauptstraße 15, 55758 Schmidt-Hachenbach")
+    _prop(client, "Berliner Straße 23", "Berliner Straße 23, 55566 Bad Sobernheim")
+    # 1. Privat gewählt: vorläufiger Betrag entfällt
+    a = _upload(client, "a.pdf", make_pdf(INVOICE_NO_ADDRESS), area="vermietung")
+    run_worker()
+    assert client.get(f"/api/documents/{a}").json()["expenses"][0]["status"] == "entwurf"
+    d = client.post(f"/api/documents/{a}/invoice", json={"area": "privat"}, headers=HEADERS).json()
+    assert d["expenses"] == []
+    # 2. Objekt über das normale Ablegen gewählt: Entwurf wird gezählt
+    b = _upload(client, "b.pdf", make_pdf(INVOICE_NO_ADDRESS[:2] + ["Rechnung Nr. 77", "Datum: 01.09.2026",
+                                                                     "Rechnungsbetrag 99,00 EUR"]), area="vermietung")
+    run_worker()
+    cat = _cat(client, "vermietung", "Rechnungen und Belege")
+    d = client.patch(f"/api/documents/{b}", json={"category_id": cat["id"], "property_id": p1, "file": True}, headers=HEADERS).json()
+    assert [(e["amount_cents"], e["status"], e["property_id"]) for e in d["expenses"]] == [(9900, "bestaetigt", p1)]
+    # 3. Privat-Upload: keine Ausgabe
+    c = _upload(client, "c.pdf", make_pdf(INVOICE_NO_ADDRESS), area="privat")
+    run_worker()
+    assert client.get(f"/api/documents/{c}").json()["expenses"] == []
+
+
+def test_undo_auto_filing_turns_expense_back_to_draft(client):
+    pid = _prop(client, "Hauptstraße 15", "Hauptstraße 15, 55758 Schmidt-Hachenbach")
+    cat = _cat(client, "vermietung", "Rechnungen und Belege")
+    client.post("/api/rules", json={"name": "Heizungsbauer", "match_field": "text", "pattern": "Heizungsbau Mueller",
+                                    "category_id": cat["id"]}, headers=HEADERS)
+    doc = _upload(client, "r.pdf", make_pdf(INVOICE), area="vermietung")
+    run_worker()
+    assert client.get(f"/api/documents/{doc}").json()["expenses"][0]["status"] == "bestaetigt"
+    d = client.post(f"/api/documents/{doc}/undo", headers=HEADERS).json()
+    assert d["status"] == "inbox" and d["expenses"][0]["status"] == "entwurf"
+    d = client.post(f"/api/documents/{doc}/accept", headers=HEADERS).json()
+    assert [(e["status"], e["property_id"]) for e in d["expenses"]] == [("bestaetigt", pid)]

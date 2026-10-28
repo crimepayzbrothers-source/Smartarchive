@@ -471,6 +471,9 @@ async def undo_auto(request: Request, conn, user):
                      (now(), doc_id))
         conn.execute("UPDATE suggestions SET status = 'open', decided_at = ? WHERE document_id = ? AND status = 'applied'",
                      (now(), doc_id))
+        # automatisch erfasster Betrag bleibt erhalten, zählt aber erst wieder nach der erneuten Ablage
+        conn.execute("UPDATE expenses SET status = 'entwurf', updated_at = ? WHERE document_id = ? AND origin = 'auto'",
+                     (now(), doc_id))
         audit(conn, "auto_filing_undone", "document", doc_id, {"category_id": d["category_id"]})
     return detail(conn, doc_id)
 

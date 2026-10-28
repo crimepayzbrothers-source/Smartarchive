@@ -116,6 +116,9 @@ function InvoiceCardInner({ doc, onChanged, compact = false, meta }: CardProps &
       {!known || editing ? (
         <>
           <p className="invoice-question">{area ? "Zuordnung" : "Wofür ist diese Rechnung?"}</p>
+          {draft && !draft.property_id && (
+            <p className="hint">Betrag {money(draft.amount_cents)} ist bereits erfasst – bitte nur noch das Objekt wählen.</p>
+          )}
           <div className="choice-chips" role="radiogroup" aria-label="Zuordnung">
             {properties.map((x) => (
               <button key={x.id} type="button" role="radio" aria-checked={area === "vermietung" && propertyId === x.id}
@@ -189,7 +192,7 @@ function InvoiceCardInner({ doc, onChanged, compact = false, meta }: CardProps &
               </>
             )}
           </dl>
-          {area === "vermietung" && draft?.status === "entwurf" && <p className="hint">Ausgabe liegt als Entwurf vor und zählt erst nach Bestätigung.</p>}
+          {area === "vermietung" && draft?.status === "entwurf" && <p className="hint">Betrag ist bereits erfasst und zählt, sobald Sie bestätigen.</p>}
           <div className="row-actions">
             <button className="primary" disabled={busy} onClick={submit}><Icon name="check" size={18} /> {area === "vermietung" && amount ? "Bestätigen" : "Passt"}</button>
             <button className="secondary" disabled={busy} onClick={() => setEditing(true)}>Ändern</button>

@@ -359,6 +359,8 @@ def decide(conn: sqlite3.Connection, document_id: int, cand: Candidate) -> str:
           {"source": cand.source, "confidence": cand.confidence, "blockers": blockers}, actor="system")
     if status == "filed":
         invoices.ensure_expense(conn, document_id)  # automatisch ausgelesen, als Aufwand erfasst
+    else:
+        invoices.capture_on_upload(conn, document_id, p)  # Betrag sofort erfassen, Objekt folgt nach Rückfrage
     return status
 
 
