@@ -1,0 +1,87 @@
+{
+  "_hinweis": "Zuordnung Dropbox → SmartArchive. Regeln werden von oben nach unten geprüft, die erste passende gilt. „match“ ist der Dropbox-Ordner (Unterordner zählen mit, * als Platzhalter). category „auto“ = Ordner per Stichwort im Bereich wählen, sonst „fallback“. Tags „{1}“/„{2}“ = Name des 1./2. Ordners im Pfad.",
+  "properties": {
+    "Hauptstraße 15": { "address": "Hauptstraße 15, 55758 Schmidt-Hachenbach", "keywords": "Schmidt-Hachenbach, Schmidthachenbach" }
+  },
+  "create_categories": [
+    { "area": "privat", "path": "Wohnen", "keywords": "hausgeld, eigentümerversammlung, teilungserklärung, wohnungseigentum, hausverwaltung, abfallkalender" },
+    { "area": "privat", "path": "Ausweise und Urkunden", "keywords": "personalausweis, reisepass, geburtsurkunde, heiratsurkunde, eheurkunde", "ai_enabled": false },
+    { "area": "privat", "path": "Bedienungsanleitungen", "keywords": "bedienungsanleitung, gebrauchsanweisung, betriebsanleitung, manual" }
+  ],
+  "skip": {
+    "extensions": [".mp4", ".mov", ".avi", ".zip", ".vcf", ".heic", ".exe", ".dmg", ".ds_store"],
+    "folders": ["Cans Fitness App"]
+  },
+  "rules": [
+    { "match": "", "area": "privat", "category": "Finanzen und Banken" },
+
+    { "match": "Can Finanzierung/Belege *", "area": "vermietung", "property": "Hauptstraße 15", "category": "Rechnungen und Belege", "tags": ["{2}"] },
+    { "match": ["Can Finanzierung/Besa Ofen Herd", "Can Finanzierung/Mietobjekt Schmidthachenbach/Schimmel*"], "area": "vermietung", "property": "Hauptstraße 15", "category": "Rechnungen und Belege" },
+    { "match": "Can Finanzierung/Mietobjekt Schmidthachenbach/Leerstand*", "area": "vermietung", "property": "Hauptstraße 15", "category": "auto", "fallback": "Rechnungen und Belege", "tags": ["Leerstand Galerie und OG rechts"] },
+    { "match": "Can Finanzierung/EG Whg Feuchtigkeit", "area": "vermietung", "property": "Hauptstraße 15", "category": "auto", "fallback": "Rechnungen und Belege", "tags": ["Feuchtigkeit EG"] },
+    { "match": ["Can Finanzierung/Abfallentsorgung", "Can Finanzierung/Abgabenbescheid", "Can Finanzierung/Bescheid Ausbaubeitrag*",
+                "Can Finanzierung/Mietobjekt Schmidthachenbach/Grundsteuer*", "Can Finanzierung/Mietobjekt Schmidthachenbach/Müllabfuhrplan",
+                "Can Finanzierung/Mietobjekt Schmidthachenbach/Wasser Abwasser"],
+      "area": "vermietung", "property": "Hauptstraße 15", "category": "Grundbesitzabgaben" },
+    { "match": ["Can Finanzierung/Ista*", "Can Finanzierung/Can AK Nebenkosten", "Can Finanzierung/Strom Allgemein", "Can Finanzierung/Wasseruhren*",
+                "Can Finanzierung/Kaminkehrer", "Can Finanzierung/Mobene Heizöl", "Can Finanzierung/Heizölstandliste", "Can Finanzierung/Feuerlöscher Wartung",
+                "Can Finanzierung/Jahresabrechnung*", "Can Finanzierung/Mietobjekt Schmidthachenbach/Zählerstände",
+                "Can Finanzierung/Mietobjekt Schmidthachenbach/TechemAngebot"],
+      "area": "vermietung", "property": "Hauptstraße 15", "category": "Nebenkosten", "tags": ["{2}"] },
+    { "match": ["Can Finanzierung/Schuldzinsen", "Can Finanzierung/Zinsen", "Can Finanzierung/Mietobjekt Schmidthachenbach/Zinsen"],
+      "area": "vermietung", "property": "Hauptstraße 15", "category": "Finanzierung" },
+    { "match": "Can Finanzierung/Mietobjekt Schmidthachenbach/Gebäudeversicherung", "area": "vermietung", "property": "Hauptstraße 15", "category": "Versicherungen" },
+    { "match": "Can Finanzierung/Mietobjekt Schmidthachenbach/Eintragungsbekanntmachung", "area": "vermietung", "property": "Hauptstraße 15", "category": "Kauf und Objektunterlagen" },
+    { "match": ["Can Finanzierung/Frau Göymen", "Can Finanzierung/Martin Hechel", "Can Finanzierung/OIE OG Rechts"],
+      "area": "vermietung", "property": "Hauptstraße 15", "category": "Mietverträge und Mieter", "tags": ["{2}"] },
+    { "match": "Can Finanzierung/Mietobjekt Schmidthachenbach", "area": "vermietung", "property": "Hauptstraße 15", "category": "auto", "fallback": "Kauf und Objektunterlagen" },
+    { "match": "Can Finanzierung/Vorlagen", "area": "vermietung", "property": "Hauptstraße 15", "category": "Sonstiges", "tags": ["Vorlagen"] },
+    { "match": "Can Finanzierung/*", "area": "vermietung", "property": "Hauptstraße 15", "category": "auto", "fallback": "Sonstiges", "tags": ["{2}"] },
+    { "match": "Can Finanzierung", "area": "vermietung", "property": "Hauptstraße 15", "category": "Finanzierung" },
+
+    { "match": "Berliner Straße 21/Strom", "area": "privat", "category": "Verträge/Strom und Gas", "tags": ["Berliner Straße 21"] },
+    { "match": "Berliner Straße 21/Telekom", "area": "privat", "category": "Verträge/Telefon und Internet", "tags": ["Berliner Straße 21"] },
+    { "match": "Berliner Straße 21/Rundfunk", "area": "privat", "category": "Verträge", "tags": ["Berliner Straße 21"] },
+    { "match": "Berliner Straße 21/Bank", "area": "privat", "category": "Finanzen und Banken", "tags": ["Berliner Straße 21"] },
+    { "match": "Berliner Straße 21/Wohngebäude Versicherung", "area": "privat", "category": "Versicherungen", "tags": ["Berliner Straße 21"] },
+    { "match": "Berliner Straße 21", "area": "privat", "category": "Wohnen", "tags": ["Berliner Straße 21"] },
+    { "match": "Berliner Straße 32 Teilungserklärung", "area": "privat", "category": "Wohnen", "tags": ["Berliner Straße 32"] },
+
+    { "match": ["Can (Privat)/Arzt", "Can (Privat)/Beihilfe Pin", "Can (Privat)/Dr willet neu"], "area": "privat", "category": "Gesundheit" },
+    { "match": ["Can (Privat)/Debeka*", "Can (Privat)/Devk Privat"], "area": "privat", "category": "Versicherungen", "tags": ["{2}"] },
+    { "match": ["Can (Privat)/Einkommensteuerbescheide", "Can (Privat)/Elster", "Can (Privat)/Steuererklärung*", "Can (Privat)/Lohnsteuerbescheinigung",
+                "Can (Privat)/Steuerbescheinigung", "Can (Privat)/Can Steuernummer"], "area": "privat", "category": "Steuern" },
+    { "match": "Can (Privat)/Grundsteuer", "area": "privat", "category": "Wohnen" },
+    { "match": ["Can (Privat)/Telekom*", "Can (Privat)/Can Telekom*"], "area": "privat", "category": "Verträge/Telefon und Internet" },
+    { "match": ["Can (Privat)/KFZ", "Can (Privat)/KfZ Haftpflicht", "Can (Privat)/Can Auto", "Can (Privat)/Volvo"], "area": "privat", "category": "Fahrzeuge" },
+    { "match": ["Can (Privat)/Ing Diba", "Can (Privat)/Depot", "Can (Privat)/Aktien", "Can (Privat)/Trade Republik", "Can (Privat)/Vermögen Can"],
+      "area": "privat", "category": "Finanzen und Banken" },
+    { "match": ["Can (Privat)/Beamte", "Can (Privat)/Beurteilung", "Can (Privat)/Can Bewerbung", "Can (Privat)/Widerspruch Alimentation",
+                "Can (Privat)/DSTG Kündigung", "Can (Privat)/Tipps und Tricks Arbeit", "Can (Privat)/Gesetze"], "area": "privat", "category": "Arbeit" },
+    { "match": ["Can (Privat)/Geburt", "Can (Privat)/Babyerstausstattung"], "area": "privat", "category": "Familie" },
+    { "match": ["Can (Privat)/Kristina privat", "Can (Privat)/Bezüge Mitteilung Kristina"], "area": "privat", "category": "Familie", "tags": ["Kristina"] },
+    { "match": "Can (Privat)/Eda Akcan", "area": "privat", "category": "Familie", "tags": ["Eda Akcan"] },
+    { "match": "Can (Privat)/Can Personalausweis", "area": "privat", "category": "Ausweise und Urkunden" },
+    { "match": "Can (Privat)/*", "area": "privat", "category": "auto", "fallback": "Sonstiges", "tags": ["{2}"] },
+    { "match": "Can (Privat)", "area": "privat", "category": "auto", "fallback": "Sonstiges" },
+
+    { "match": ["Can Versicherungen", "DVAG", "DVAG CAN"], "area": "privat", "category": "Versicherungen", "tags": ["{1}"] },
+    { "match": ["Kapitalerträge", "Back up Scalable"], "area": "privat", "category": "Finanzen und Banken" },
+    { "match": "Bmw 1er", "area": "privat", "category": "Fahrzeuge", "tags": ["BMW 1er"] },
+    { "match": "Can Bewerbung", "area": "privat", "category": "Arbeit" },
+    { "match": ["Bedienungsanleitungen*", "Rauchmelder"], "area": "privat", "category": "Bedienungsanleitungen" },
+    { "match": ["Geburtsurkunde", "Kristina und Can Hochzeit", "Can Hochzeit"], "area": "privat", "category": "Ausweise und Urkunden" },
+    { "match": ["Can Hausbau", "Abfallkalender"], "area": "privat", "category": "Wohnen" },
+
+    { "match": ["Kristina", "Kristina *"], "area": "privat", "category": "Familie", "tags": ["Kristina"] },
+    { "match": ["Ugur", "Ugur *"], "area": "privat", "category": "Familie", "tags": ["Ugur"] },
+    { "match": ["Güler", "Alg 2 Güler"], "area": "privat", "category": "Familie", "tags": ["Güler"] },
+    { "match": ["Baba *"], "area": "privat", "category": "Familie", "tags": ["Baba"] },
+    { "match": ["Anne *"], "area": "privat", "category": "Familie", "tags": ["Anne"] },
+    { "match": ["Murat", "Dogan Serin", "Ebru"], "area": "privat", "category": "Familie", "tags": ["{1}"] },
+    { "match": ["Ergün *"], "area": "privat", "category": "Familie", "tags": ["Ergün"] },
+    { "match": ["Alex *"], "area": "privat", "category": "Familie", "tags": ["Alex"] },
+
+    { "match": "*", "area": "privat", "category": "auto", "fallback": "Sonstiges", "tags": ["{1}"] }
+  ]
+}

@@ -140,6 +140,26 @@ def ocr_pdf(src: Path, workdir: Path) -> tuple[Path | None, list[str]]:
         return None, []
 
 
+def office_to_pdf(src: Path, workdir: Path, timeout: int = 900) -> Path:
+    """Wandelt Word/Excel/PowerPoint usw. mit LibreOffice (ohne Oberfläche) in PDF um."""
+    soffice = shutil.which("soffice") or shutil.which("libreoffice")
+    if not soffice:
+        raise RuntimeError("LibreOffice ist nicht installiert – Office-Dateien können nicht umgewandelt werden.")
+    out = workdir / "office"
+    out.mkdir(parents=True, exist_ok=True)
+    profile = workdir / "lo-profile"
+    env = {"HOME": str(workdir), "PATH": "/usr/bin:/bin:/usr/local/bin"}
+    proc = subprocess.run(
+        [soffice, f"-env:UserInstallation=file://{profile}", "--headless", "--norestore",
+         "--convert-to", "pdf", "--outdir", str(out), str(src)],
+        capture_output=True, text=True, timeout=timeout, env=env,
+    )
+    pdfs = list(out.glob("*.pdf"))
+    if proc.returncode != 0 or not pdfs:
+        raise RuntimeError(f"Umwandlung in PDF fehlgeschlagen: {(proc.stderr or proc.stdout)[-300:]}")
+    return pdfs[0]
+
+
 def render_page(pdf: Path, page: int, dpi: int, out: Path) -> Path:
     """Rendert eine Seite als PNG (für die Vorschau auf dem Handy)."""
     out.parent.mkdir(parents=True, exist_ok=True)

@@ -18,8 +18,35 @@ MIME_EXT = {
     "image/tiff": ".tif",
 }
 
+# Office- und Textformate: werden im Original behalten und für Vorschau/Suche in PDF umgewandelt.
+OFFICE_MIME = {
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".doc": "application/msword",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".xls": "application/vnd.ms-excel",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".ppt": "application/vnd.ms-powerpoint",
+    ".odt": "application/vnd.oasis.opendocument.text",
+    ".ods": "application/vnd.oasis.opendocument.spreadsheet",
+    ".odp": "application/vnd.oasis.opendocument.presentation",
+    ".rtf": "application/rtf",
+    ".pages": "application/x-iwork-pages",
+    ".numbers": "application/x-iwork-numbers",
+    ".key": "application/x-iwork-keynote",
+    ".csv": "text/csv",
+    ".txt": "text/plain",
+}
+OFFICE_EXT = {v: k for k, v in OFFICE_MIME.items()}
 
-def sniff_mime(data: bytes, fallback: str = "application/octet-stream") -> str:
+
+def is_office(mime: str) -> bool:
+    return mime in OFFICE_EXT
+
+
+def sniff_mime(data: bytes, fallback: str = "application/octet-stream", filename: str = "") -> str:
+    ext = Path(filename).suffix.lower()
+    if ext in OFFICE_MIME and data[:5] != b"%PDF-":
+        return OFFICE_MIME[ext]
     if data[:5] == b"%PDF-":
         return "application/pdf"
     if data[:3] == b"\xff\xd8\xff":
@@ -67,7 +94,8 @@ def _atomic_write(target: Path, data: bytes, readonly: bool) -> None:
 def store_original(data: bytes, mime: str) -> tuple[str, str]:
     """Speichert ein Original und liefert (sha256, relativer Pfad)."""
     digest = sha256_bytes(data)
-    rel = Path("originals") / digest[:2] / digest[2:4] / (digest + MIME_EXT.get(mime, ".bin"))
+    ext = MIME_EXT.get(mime) or OFFICE_EXT.get(mime) or ".bin"
+    rel = Path("originals") / digest[:2] / digest[2:4] / (digest + ext)
     target = config.settings.files_dir / rel
     if not target.exists():
         _atomic_write(target, data, readonly=True)

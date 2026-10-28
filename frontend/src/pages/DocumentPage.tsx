@@ -8,7 +8,7 @@ const ACTION_LABEL: Record<string, string> = {
   uploaded: "Hochgeladen", auto_filed: "Automatisch abgelegt", suggested: "Vorschlag erstellt", filed: "Abgelegt",
   updated: "Geändert", area_changed: "Bereich gewechselt", auto_filing_undone: "Automatische Ablage zurückgenommen",
   deleted: "In den Papierkorb gelegt", restored: "Wiederhergestellt", expense_added: "Ausgabe erfasst",
-  file_viewed: "Angesehen", file_downloaded: "Heruntergeladen", reprocess_requested: "Neu verarbeitet", processing_failed: "Verarbeitung fehlgeschlagen",
+  file_viewed: "Angesehen", file_downloaded: "Heruntergeladen", imported: "Importiert", import_filed: "Beim Import abgelegt", reprocess_requested: "Neu verarbeitet", processing_failed: "Verarbeitung fehlgeschlagen",
 };
 
 export default function DocumentPage({ id }: { id: number }) {
@@ -99,7 +99,8 @@ export default function DocumentPage({ id }: { id: number }) {
           {doc.suggestion && doc.status !== "processing" && (doc.suggestion.status === "open" || doc.suggestion.status === "applied" || doc.suggestion.status === "info") && !(doc.confirmed && doc.status === "filed") && (
             <SuggestionBox docId={id} status={doc.status} suggestion={doc.suggestion} onChanged={reload} />
           )}
-          {doc.status === "filed" && doc.confirmed === 1 && doc.filed_by && doc.filed_by !== "user" && (
+          {doc.source_path && <p className="hint">Aus Dropbox übernommen: /{doc.source_path}</p>}
+          {doc.status === "filed" && doc.confirmed === 1 && doc.filed_by && doc.filed_by !== "user" && doc.filed_by !== "import" && (
             <p className="hint">Abgelegt durch {sourceLabel(doc.filed_by)}, von Ihnen bestätigt.</p>
           )}
 

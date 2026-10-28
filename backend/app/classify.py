@@ -343,3 +343,60 @@ def decide(conn: sqlite3.Connection, document_id: int, cand: Candidate) -> str:
     audit(conn, "auto_filed" if status == "filed" else "suggested", "document", document_id,
           {"source": cand.source, "confidence": cand.confidence, "blockers": blockers}, actor="system")
     return status
+
+
+_GENERIC_NAME = re.compile(
+    r"(?:(?:img|image|scan|dsc|dcim|pxl|photo|foto|bild|doc|dokument|document|cam|screenshot|whatsapp)[\W_]*)?"
+    r"(?:[\d\W_]|wa\d+)*", re.I)
+
+
+def apply_preset(conn: sqlite3.Connection, document_id: int, preset: dict[str, Any]) -> str:
+    """Ablage für importierte Dokumente: Ziel steht aus der Ordner-Zuordnung fest.
+
+    category_id = None bedeutet „automatisch im Bereich“: Stichwörter entscheiden, sonst der Ersatzordner.
+    Importierte Dokumente gelten als bestätigt, weil Sie sie selbst schon einsortiert hatten.
+    """
+    doc = dict(conn.execute("SELECT * FROM documents WHERE id = ?", (document_id,)).fetchone())
+    text_row = conn.execute("SELECT content FROM document_text WHERE document_id = ?", (document_id,)).fetchone()
+    text = text_row[0] if text_row else ""
+    area_id = preset["area_id"]
+    category_id = preset.get("category_id")
+    reason = f"Aus Dropbox-Ordner „{(doc['source_path'] or '').rsplit('/', 1)[0] or '/'}“ übernommen."
+    if not category_id:
+        area_key = conn.execute("SELECT key FROM areas WHERE id = ?", (area_id,)).fetchone()[0]
+        cats = [c for c in category_paths(conn) if c["area_key"] == area_key]
+        scored = extract.keyword_scores(text + "\n" + (doc["source_path"] or ""), cats)
+        if scored and scored[0][1] >= 2:
+            category_id = scored[0][0]["id"]
+            reason += " Ordner per Stichwort gewählt: " + ", ".join(scored[0][2][:4]) + "."
+        else:
+            category_id = preset["fallback_category_id"]
+
+    correspondents = rows(conn.execute("SELECT id, name, aliases FROM correspondents ORDER BY name"))
+    corr_id, _ = extract.detect_correspondent(text, correspondents)
+    doc_date, _ = extract.detect_date(text)
+    doc_type = extract.detect_doc_type(text)
+    title = doc["title"]
+    if _GENERIC_NAME.fullmatch(title or ""):
+        corr = next((c["name"] for c in correspondents if c["id"] == corr_id), "")
+        folder = (doc["source_path"] or "").rsplit("/", 2)[-2] if (doc["source_path"] or "").count("/") else ""
+        parts = [doc_type or folder or "Dokument", corr if corr.lower() not in folder.lower() else ""]
+        if doc_date:
+            parts.append(f"{doc_date[5:7]}/{doc_date[:4]}")
+        title = " ".join(x for x in parts if x)[:80]
+
+    ts = now()
+    conn.execute(
+        "UPDATE documents SET area_id = ?, category_id = ?, property_id = ?, correspondent_id = COALESCE(correspondent_id, ?), "
+        "doc_date = COALESCE(doc_date, ?), doc_type = CASE WHEN doc_type = '' THEN COALESCE(?, '') ELSE doc_type END, "
+        "title = ?, status = 'filed', filed_by = 'import', filed_reason = ?, confidence = 1.0, confirmed = 1, "
+        "filed_at = ?, updated_at = ? WHERE id = ?",
+        (area_id, category_id, preset.get("property_id"), corr_id, doc_date, doc_type, title, reason, ts, ts, document_id),
+    )
+    for name in preset.get("tags") or []:
+        conn.execute("INSERT OR IGNORE INTO tags(name) VALUES(?)", (name,))
+        tag_id = conn.execute("SELECT id FROM tags WHERE name = ? COLLATE NOCASE", (name,)).fetchone()[0]
+        conn.execute("INSERT OR IGNORE INTO document_tags(document_id, tag_id) VALUES(?,?)", (document_id, tag_id))
+    audit(conn, "import_filed", "document", document_id, {"category_id": category_id, "property_id": preset.get("property_id")},
+          actor="import")
+    return "filed"

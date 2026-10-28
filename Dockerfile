@@ -11,6 +11,7 @@ FROM python:3.12-slim-bookworm
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 DATA_DIR=/data STATIC_DIR=/app/static
 RUN apt-get update && apt-get install -y --no-install-recommends \
       tesseract-ocr tesseract-ocr-deu tesseract-ocr-eng ocrmypdf ghostscript poppler-utils qpdf unpaper fonts-dejavu-core \
+      libreoffice-writer-nogui libreoffice-calc-nogui libreoffice-impress-nogui fonts-liberation2 fonts-crosextra-carlito \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY backend/requirements.txt ./

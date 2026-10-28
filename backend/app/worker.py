@@ -31,7 +31,7 @@ def recover_stale(conn: sqlite3.Connection) -> None:
 def claim(conn: sqlite3.Connection) -> dict | None:
     with tx(conn):
         r = conn.execute(
-            "SELECT * FROM jobs WHERE status = 'queued' AND run_after <= ? ORDER BY id LIMIT 1", (now(),)
+            "SELECT * FROM jobs WHERE status = 'queued' AND run_after <= ? ORDER BY priority, id LIMIT 1", (now(),)
         ).fetchone()
         if not r:
             return None

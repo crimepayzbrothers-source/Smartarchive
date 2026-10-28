@@ -90,6 +90,29 @@ RESTIC_PASSWORD_FILE=/root/.restic-pass
 
 Für SFTP ohne Passworteingabe einen SSH-Schlüssel auf der Storage Box hinterlegen (Hetzner-Doku „Storage Box – SSH-Keys“).
 
+## Import aus Dropbox
+
+Der Import übernimmt PDFs, Bilder und Office-Dateien und legt sie anhand Ihrer Dropbox-Ordner direkt ab. Die Zuordnung steht in `backend/app/import_mappings/dropbox.json`. Bereits importierte Dateien werden bei jedem weiteren Lauf übersprungen, Dubletten erkannt.
+
+1. **Zugriffsschlüssel erzeugen** (gilt 4 Stunden, nur Leserechte): dropbox.com/developers/apps → *Create app* → *Scoped access* → *Full Dropbox* → Name vergeben. Reiter *Permissions*: `files.metadata.read` und `files.content.read` anhaken, *Submit*. Reiter *Settings* → *Generated access token* → *Generate*.
+2. **Probelauf** (verändert nichts):
+
+   ```bash
+   cd ~/smartarchive
+   read -rs DROPBOX_TOKEN     # Schlüssel einfügen, Enter (Eingabe bleibt unsichtbar)
+   docker compose exec -e DROPBOX_TOKEN="$DROPBOX_TOKEN" app python -m app.importer plan
+   ```
+3. **Import starten** (läuft im Hintergrund weiter, auch wenn die SSH-Verbindung abbricht):
+
+   ```bash
+   docker compose exec -d -e DROPBOX_TOKEN="$DROPBOX_TOKEN" app sh -c 'python -m app.importer run > /data/import.log 2>&1'
+   tail -3 data/import.log                                   # Fortschritt beim Herunterladen
+   docker compose exec app python -m app.importer status     # Fortschritt der Texterkennung
+   ```
+4. Danach die Dropbox-App unter dropbox.com/developers/apps wieder löschen. Das macht den Schlüssel sofort ungültig.
+
+Aus einem lokalen Ordner auf dem Server importieren: `python -m app.importer run --dir /pfad/im/container`.
+
 ## Update
 
 ```bash

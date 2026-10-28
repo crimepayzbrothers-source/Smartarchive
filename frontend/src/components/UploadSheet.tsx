@@ -83,11 +83,11 @@ export default function UploadSheet({ open, onClose, defaultArea = "auto", onDon
             <Icon name="camera" size={28} /> <span>Foto aufnehmen</span>
           </button>
           <button className="big-action secondary" onClick={() => fileRef.current?.click()}>
-            <Icon name="file" size={26} /> <span>PDF oder Bilder wählen</span>
+            <Icon name="file" size={26} /> <span>Dateien wählen</span>
           </button>
           <p className="drop-hint">oder Dateien hierher ziehen</p>
           <input ref={cameraRef} type="file" accept="image/*" capture="environment" hidden onChange={(e) => { add(e.target.files); e.target.value = ""; }} />
-          <input ref={fileRef} type="file" accept="application/pdf,image/*" multiple hidden onChange={(e) => { add(e.target.files); e.target.value = ""; }} />
+          <input ref={fileRef} type="file" accept="application/pdf,image/*,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.odt,.ods,.odp,.rtf,.csv,.txt" multiple hidden onChange={(e) => { add(e.target.files); e.target.value = ""; }} />
         </div>
 
         {items.length > 0 && (

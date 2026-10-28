@@ -94,7 +94,7 @@ export function Confidence({ value }: { value: number }) {
   );
 }
 
-const SOURCE: Record<string, string> = { rule: "Regel", history: "Bisherige Ablage", ai: "KI", keyword: "Stichwörter", user: "Von Ihnen" };
+const SOURCE: Record<string, string> = { rule: "Regel", history: "Bisherige Ablage", ai: "KI", keyword: "Stichwörter", user: "Von Ihnen", import: "Import" };
 export const sourceLabel = (s?: string | null) => (s ? SOURCE[s] || s : "");
 
 // --- Dokumentliste --------------------------------------------------------------

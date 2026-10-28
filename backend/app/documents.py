@@ -43,19 +43,19 @@ def ingest(conn: sqlite3.Connection, uploads: list[tuple[str, bytes]], upload_ar
 
     prepared = []
     for name, data in uploads:
-        mime = storage.sniff_mime(data)
+        mime = storage.sniff_mime(data, filename=name)
         if mime == "image/heic":
             rejected.append({"name": name, "reason": "HEIC wird nicht unterstützt. Bitte als JPEG aufnehmen."})
             continue
-        if mime not in ACCEPTED:
-            rejected.append({"name": name, "reason": "Nur PDF und Bilder (JPEG, PNG, WebP, TIFF) sind erlaubt."})
+        if mime not in ACCEPTED and not storage.is_office(mime):
+            rejected.append({"name": name, "reason": "Erlaubt sind PDF, Bilder sowie Word-, Excel- und PowerPoint-Dateien."})
             continue
         prepared.append((name, data, mime))
 
     groups: list[list[tuple[str, bytes, str]]]
-    images = [p for p in prepared if p[2] != "application/pdf"]
+    images = [p for p in prepared if p[2].startswith("image/")]
     if combine_images and len(images) > 1:
-        groups = [[p] for p in prepared if p[2] == "application/pdf"] + [images]
+        groups = [[p] for p in prepared if not p[2].startswith("image/")] + [images]
     else:
         groups = [[p] for p in prepared]
 
@@ -87,11 +87,43 @@ def ingest(conn: sqlite3.Connection, uploads: list[tuple[str, bytes]], upload_ar
     return {"created": created, "duplicates": duplicates, "rejected": rejected}
 
 
-def enqueue(conn: sqlite3.Connection, document_id: int, kind: str) -> None:
+def ingest_import(conn: sqlite3.Connection, name: str, data: bytes, *, area: str, preset: dict,
+                  source_path: str) -> tuple[str, int | None, str]:
+    """Nimmt eine Datei aus einem Import auf. Liefert (Status, Dokument-ID, SHA-256).
+
+    Die Ablage steht schon fest (preset); der Worker erkennt danach nur noch Text, Datum usw.
+    Importaufträge laufen mit niedriger Priorität, damit neue Uploads nicht warten müssen.
+    """
+    mime = storage.sniff_mime(data, filename=name)
+    sha = storage.sha256_bytes(data)
+    if mime not in ACCEPTED and not storage.is_office(mime):
+        return "skipped", None, sha
+    dup = find_duplicate(conn, sha)
+    if dup:
+        return "duplicate", dup["id"], sha
+    ts = now()
+    with tx(conn):
+        doc_id = conn.execute(
+            "INSERT INTO documents(title, original_name, upload_area, status, source_path, preset, created_at, updated_at) "
+            "VALUES(?,?,?,?,?,?,?,?)",
+            (_stem(name), name, area, "processing", source_path, json.dumps(preset, ensure_ascii=False), ts, ts),
+        ).lastrowid
+        _, rel = storage.store_original(data, mime)
+        conn.execute(
+            "INSERT INTO files(document_id, role, sha256, mime, size, path, original_name, position, created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+            (doc_id, "original", sha, mime, len(data), rel, name, 0, ts),
+        )
+        conn.execute("INSERT INTO document_text(document_id, content) VALUES(?, '')", (doc_id,))
+        enqueue(conn, doc_id, "process", priority=10)
+        audit(conn, "imported", "document", doc_id, {"quelle": source_path}, actor="import")
+    return "imported", doc_id, sha
+
+
+def enqueue(conn: sqlite3.Connection, document_id: int, kind: str, priority: int = 0) -> None:
     ts = now()
     conn.execute(
-        "INSERT INTO jobs(document_id, kind, status, run_after, created_at, updated_at) VALUES(?,?,?,?,?,?)",
-        (document_id, kind, "queued", ts, ts, ts),
+        "INSERT INTO jobs(document_id, kind, status, priority, run_after, created_at, updated_at) VALUES(?,?,?,?,?,?,?)",
+        (document_id, kind, "queued", priority, ts, ts, ts),
     )
 
 
@@ -128,6 +160,15 @@ def extract_text(conn: sqlite3.Connection, document_id: int) -> None:
         work = Path(tmpdir)
         if len(originals) == 1 and originals[0]["mime"] == "application/pdf":
             src = storage.abs_path(originals[0]["path"])
+        elif len(originals) == 1 and storage.is_office(originals[0]["mime"]):
+            orig = originals[0]
+            named = work / ("input" + storage.OFFICE_EXT[orig["mime"]])
+            named.write_bytes(storage.abs_path(orig["path"]).read_bytes())
+            converted = ocr.office_to_pdf(named, work)
+            src = work / "document.pdf"
+            converted.replace(src)
+            with tx(conn):
+                _replace_derived(conn, document_id, "pdf", src, "document.pdf", "application/pdf")
         else:
             pdf_bytes = ocr.images_to_pdf([storage.abs_path(f["path"]).read_bytes() for f in originals])
             src = work / "document.pdf"
@@ -172,6 +213,12 @@ def extract_text(conn: sqlite3.Connection, document_id: int) -> None:
 
 def process(conn: sqlite3.Connection, document_id: int) -> str:
     extract_text(conn, document_id)
+    preset = conn.execute("SELECT preset FROM documents WHERE id = ?", (document_id,)).fetchone()[0]
+    if preset:
+        with tx(conn):
+            status = classify.apply_preset(conn, document_id, json.loads(preset))
+            index_document(conn, document_id)
+        return status
     cand = classify.analyze(conn, document_id)
     with tx(conn):
         status = classify.decide(conn, document_id, cand)
@@ -189,7 +236,7 @@ def reclassify(conn: sqlite3.Connection, document_id: int) -> str:
 
 def index_document(conn: sqlite3.Connection, document_id: int) -> None:
     d = row(conn.execute(
-        "SELECT d.title, d.doc_type, d.original_name, c.name AS corr, cat.name AS cat, p.name AS prop, p.address AS addr, "
+        "SELECT d.title, d.doc_type, d.original_name, d.source_path, c.name AS corr, cat.name AS cat, p.name AS prop, p.address AS addr, "
         "t.content FROM documents d LEFT JOIN correspondents c ON c.id = d.correspondent_id "
         "LEFT JOIN categories cat ON cat.id = d.category_id LEFT JOIN properties p ON p.id = d.property_id "
         "LEFT JOIN document_text t ON t.document_id = d.id WHERE d.id = ?", (document_id,)))
@@ -197,7 +244,8 @@ def index_document(conn: sqlite3.Connection, document_id: int) -> None:
         return
     tags = [r[0] for r in conn.execute(
         "SELECT t.name FROM tags t JOIN document_tags dt ON dt.tag_id = t.id WHERE dt.document_id = ?", (document_id,))]
-    meta = " ".join(filter(None, [d["corr"], d["cat"], d["prop"], d["addr"], d["doc_type"], d["original_name"], *tags]))
+    meta = " ".join(filter(None, [d["corr"], d["cat"], d["prop"], d["addr"], d["doc_type"], d["original_name"],
+                                  (d["source_path"] or "").replace("/", " "), *tags]))
     conn.execute("DELETE FROM docs_fts WHERE rowid = ?", (document_id,))
     conn.execute("INSERT INTO docs_fts(rowid, title, content, meta) VALUES(?,?,?,?)",
                  (document_id, d["title"] or "", d["content"] or "", meta))

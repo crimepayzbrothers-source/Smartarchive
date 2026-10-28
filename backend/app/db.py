@@ -220,6 +220,25 @@ MIGRATIONS: list[str] = [
     );
     CREATE INDEX ix_audit_entity ON audit_log(entity, entity_id);
     """,
+    # 2 – Import (Herkunft, Voreinstellung), Auftragspriorität
+    """
+    ALTER TABLE documents ADD COLUMN source_path TEXT;
+    ALTER TABLE documents ADD COLUMN preset TEXT;
+    ALTER TABLE jobs ADD COLUMN priority INTEGER NOT NULL DEFAULT 0;
+    CREATE INDEX ix_jobs_priority ON jobs(status, priority, id);
+    CREATE TABLE import_items (
+        source TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        path TEXT NOT NULL,
+        size INTEGER,
+        sha256 TEXT,
+        document_id INTEGER REFERENCES documents(id) ON DELETE SET NULL,
+        status TEXT NOT NULL,              -- imported | duplicate | skipped | failed
+        note TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (source, source_id)
+    );
+    """,
 ]
 
 
