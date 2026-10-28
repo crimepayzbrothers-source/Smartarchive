@@ -214,7 +214,7 @@ function InvoiceCardInner({ doc, onChanged, compact = false, meta }: CardProps &
               <>
                 <dt>Betrag</dt><dd>{amount ? money(parseMoney(amount)) : "nicht erkannt"}</dd>
                 <dt>Kategorie</dt><dd>{expLabel || "bitte wählen"}</dd>
-                <dt>Bezahlt</dt><dd>{paidOn ? date(paidOn) : invoiceDate ? `${date(invoiceDate)} (angenommen)` : "–"}</dd>
+                <dt>Bezahlt</dt><dd>{paidOn ? `${date(paidOn)}${draft?.paid_assumed && paidOn === draft?.paid_on ? " (angenommen)" : ""}` : invoiceDate ? `${date(invoiceDate)} (angenommen)` : "–"}</dd>
               </>
             )}
           </dl>

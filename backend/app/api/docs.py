@@ -84,6 +84,7 @@ def detail(conn, document_id: int) -> dict[str, Any]:
         (document_id,)))
     for h in d["history"]:
         h["details"] = json.loads(h["details"])
+    d["date_candidates"] = json.loads(d.get("date_candidates") or "[]")
     d["display_filename"] = documents.display_filename(conn, document_id)
     d["has_pdf"] = documents.best_pdf(conn, document_id) is not None
     return d
@@ -96,6 +97,8 @@ async def upload(request: Request, conn, user):
     limit = config.settings.max_upload_mb * 1024 * 1024
     form = await request.form(max_files=100, max_fields=60)
     area = str(form.get("area") or "auto")
+    prop_raw = str(form.get("property_id") or "")
+    property_id = int(prop_raw) if prop_raw.isdigit() else None
     combine = str(form.get("combine") or "") in ("1", "true", "ja")
     uploads: list[tuple[str, bytes]] = []
     for item in form.getlist("files"):
@@ -118,7 +121,7 @@ async def upload(request: Request, conn, user):
     if not uploads:
         raise ApiError(400, "Keine Datei erhalten.")
     try:
-        result = await run_in_threadpool(documents.ingest, conn, uploads, area, combine, captures)
+        result = await run_in_threadpool(documents.ingest, conn, uploads, area, combine, captures, property_id)
     except documents.IngestError as exc:
         raise ApiError(400, str(exc)) from None
     return result
@@ -189,12 +192,14 @@ async def inbox(request: Request, conn, user):
     for item in pending + auto:
         item["suggestion"] = _suggestion(conn, item["id"])
         item["expenses"] = rows(conn.execute("SELECT * FROM expenses WHERE document_id = ? ORDER BY id", (item["id"],)))
-    und = invoices.undated(conn)
+    und = invoices.undated(conn) + invoices.unsure_dates(conn)
     by_doc = {u["document_id"]: u for u in und if u["document_id"]}
     undated_docs = rows(conn.execute(LIST_SELECT + f" WHERE d.id IN ({','.join('?' * len(by_doc))}) ORDER BY d.id DESC",
                                      list(by_doc))) if by_doc else []
     for item in undated_docs:
         item["expense"] = by_doc[item["id"]]
+        r = conn.execute("SELECT date_status, date_candidates FROM documents WHERE id = ?", (item["id"],)).fetchone()
+        item["date_status"], item["date_candidates"] = r[0], json.loads(r[1] or "[]")
     return {"pending": _decorate(conn, pending), "auto_filed": _decorate(conn, auto), "undated": _decorate(conn, undated_docs)}
 
 
@@ -450,11 +455,15 @@ async def set_date(request: Request, conn, user):
     doc_id = path_int(request)
     data = await body(request, DateIn)
     with tx(conn):
+        old = conn.execute("SELECT doc_date FROM documents WHERE id = ?", (doc_id,)).fetchone()
+        old_date = old[0] if old else None
         documents.apply_fields(conn, doc_id, {"doc_date": data.date})
-        conn.execute("UPDATE expenses SET invoice_date = ?, updated_at = ? WHERE document_id = ? AND invoice_date IS NULL",
-                     (data.date, now(), doc_id))
-        conn.execute("UPDATE expenses SET paid_on = ?, paid_assumed = 1, updated_at = ? WHERE document_id = ? AND paid_on IS NULL",
-                     (data.date, now(), doc_id))
+        conn.execute("UPDATE documents SET date_status = 'sure' WHERE id = ?", (doc_id,))
+        # Positionen, deren Datum aus dem Beleg stammte, übernehmen das bestätigte Datum
+        conn.execute("UPDATE expenses SET invoice_date = ?, updated_at = ? WHERE document_id = ? "
+                     "AND (invoice_date IS NULL OR invoice_date = ?)", (data.date, now(), doc_id, old_date))
+        conn.execute("UPDATE expenses SET paid_on = ?, paid_assumed = 1, updated_at = ? WHERE document_id = ? "
+                     "AND (paid_on IS NULL OR paid_assumed = 1)", (data.date, now(), doc_id))
         documents.index_document(conn, doc_id)
     return detail(conn, doc_id)
 

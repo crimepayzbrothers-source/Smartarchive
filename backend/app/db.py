@@ -300,6 +300,11 @@ MIGRATIONS: list[str] = [
     """
     ALTER TABLE expenses ADD COLUMN paid_assumed INTEGER NOT NULL DEFAULT 0;
     """,
+    # 7 – Sicherheit des erkannten Belegdatums (sure | unsure) und gefundene Kandidaten zur Auswahl
+    """
+    ALTER TABLE documents ADD COLUMN date_status TEXT;
+    ALTER TABLE documents ADD COLUMN date_candidates TEXT NOT NULL DEFAULT '[]';
+    """,
 ]
 
 

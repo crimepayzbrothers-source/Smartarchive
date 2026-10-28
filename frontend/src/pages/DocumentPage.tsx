@@ -109,6 +109,10 @@ export default function DocumentPage({ id }: { id: number }) {
           {!doc.doc_date && !invoiceCard && doc.expenses.some((e: any) => !e.invoice_date && !e.paid_on) && (
             <DateQuestion docId={id} amount={doc.expenses[0]?.amount_cents} onChanged={reload} />
           )}
+          {doc.doc_date && doc.date_status === "unsure" && (
+            <DateQuestion docId={id} amount={doc.expenses[0]?.amount_cents} onChanged={reload}
+              suggestion={doc.doc_date} candidates={doc.date_candidates || []} />
+          )}
           {invoiceCard && <InvoiceCard doc={doc} onChanged={reload} />}
           {!invoiceCard && doc.suggestion && doc.status !== "processing" && (doc.suggestion.status === "open" || doc.suggestion.status === "applied" || doc.suggestion.status === "info") && !(doc.confirmed && doc.status === "filed") && (
             <SuggestionBox docId={id} status={doc.status} suggestion={doc.suggestion} onChanged={reload} />

@@ -71,17 +71,18 @@ def find_dates(text: str) -> list[tuple[date, int]]:
     return sorted(found, key=lambda x: x[1])
 
 
-def detect_date(text: str) -> tuple[str | None, str]:
-    """Belegdatum aus dem erkannten Text.
+def date_analysis(text: str) -> dict:
+    """Belegdatum mit Sicherheit und allen Kandidaten.
 
-    Vorrang: beschriftete Daten („Rechnungsdatum“, „Datum“, „vom“ – auch in der Zeile davor), dann das erste
-    Datum im Kopfbereich. Fälligkeits- und Laufzeitdaten („zahlbar bis …“) werden gemieden.
+    Vorrang: beschriftete Daten („Rechnungsdatum“ > „Datum“/„vom“ > „Leistungsdatum“ – auch in der Zeile davor), dann das
+    erste Datum im Kopfbereich. Fälligkeits- und Laufzeitdaten („zahlbar bis …“) werden gemieden.
+    Sicher ist das Ergebnis, wenn es eindeutig beschriftet ist oder im Beleg nur ein Datum vorkommt.
     """
     fixed = _ocr_fix(text)
     dates = find_dates(text)
     if not dates:
-        return None, ""
-    best: tuple[tuple[int, int, int], date, int] | None = None
+        return {"date": None, "evidence": "", "sure": False, "candidates": []}
+    scored = []
     for dt, pos in dates:
         before = fixed[max(0, pos - 40):pos]
         same_line = before.rsplit("\n", 1)[-1]
@@ -91,11 +92,26 @@ def detect_date(text: str) -> tuple[str | None, str]:
                 prio = p
                 break
         avoid = bool(_DATE_AVOID.search(same_line)) and prio < 3
-        key = (0 if avoid else 1, prio, -pos)
-        if best is None or key > best[0]:
-            best = (key, dt, pos)
-    _, dt, pos = best
-    return dt.isoformat(), _line_at(fixed, pos)
+        scored.append(((0 if avoid else 1, prio, -pos), dt, pos, prio, avoid))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    _, best, pos, prio, avoid = scored[0]
+    distinct = {s_[1] for s_ in scored}
+    rivals = {s_[1] for s_ in scored[1:] if s_[1] != best and s_[3] >= max(prio, 2) and not s_[4]}
+    sure = not avoid and (len(distinct) == 1 or (prio == 3 and not rivals) or (prio == 2 and not rivals))
+    cands, seen = [], set()
+    for _, dt, p_, pr, av in scored:
+        if dt in seen:
+            continue
+        seen.add(dt)
+        cands.append({"date": dt.isoformat(), "line": _line_at(fixed, p_), "labeled": pr >= 2, "due": av})
+        if len(cands) >= 6:
+            break
+    return {"date": best.isoformat(), "evidence": _line_at(fixed, pos), "sure": sure, "candidates": cands}
+
+
+def detect_date(text: str) -> tuple[str | None, str]:
+    a = date_analysis(text)
+    return a["date"], a["evidence"]
 
 
 def parse_amount(raw_int: str, raw_dec: str) -> int:
@@ -190,7 +206,7 @@ DOC_TYPES = [
     ("Bescheid", r"\w*bescheid\b"),
     ("Mahnung", r"\bmahnung\b|zahlungserinnerung"),
     ("Gutschrift", r"\bgutschrift\b"),
-    ("Rechnung", r"\brechnung\b|\brechnungs(nummer|datum)|\binvoice\b"),
+    ("Rechnung", r"\brechnung\b|\brechnungs[\s-]?(nummer|nr|datum|betrag|summe)|\bre[.-]?nr\b|\binvoice\b"),
     ("Kassenbon", r"kassenbon|\bbon[- ]?nr|\bkassenbeleg"),
     ("Quittung", r"\bquittung\b"),
     ("Kontoauszug", r"kontoauszug"),

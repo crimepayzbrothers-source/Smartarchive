@@ -226,6 +226,18 @@ def analyze(conn: sqlite3.Connection, document_id: int) -> Candidate | None:
     if best is None:
         best = Candidate("keyword", 0.0, {}, blocked_reason or "Keine passende Ablage erkannt.")
 
+    # Beim Upload gewähltes Mietobjekt hat Vorrang vor jeder Erkennung
+    if doc["property_id"]:
+        vm = conn.execute("SELECT id FROM areas WHERE key = 'vermietung'").fetchone()[0]
+        if best.payload.get("area_id") not in (None, vm) or not best.payload.get("category_id"):
+            vm_cats = [c for c in cats if c["area_key"] == "vermietung"]
+            kw = extract.keyword_scores(text, vm_cats)
+            cat = kw[0][0]["id"] if kw else next(c["id"] for c in vm_cats if c["name"] == "Rechnungen und Belege" or c["name"] == "Sonstiges")
+            best = Candidate(best.source if best.payload.get("area_id") == vm else "keyword", max(best.confidence, 0.6),
+                             {"area_id": vm, "category_id": cat}, best.reason, best.evidence)
+        best.payload["property_id"] = doc["property_id"]
+        best.payload["property_chosen"] = True
+
     # Ergänzen um lokal erkannte Felder
     p = best.payload
     if corr_id and not p.get("correspondent_id"):
@@ -247,10 +259,14 @@ def analyze(conn: sqlite3.Connection, document_id: int) -> Candidate | None:
             amount, _amount_ev = extract.detect_amount(text)
             if amount:
                 p["amount_cents"] = amount
+    da = extract.date_analysis(text)
+    p["date_candidates"] = da["candidates"]
     if not p.get("doc_date"):
-        d, _ = extract.detect_date(text)
-        if d:
-            p["doc_date"] = d
+        if da["date"]:
+            p["doc_date"] = da["date"]
+            p["date_sure"] = da["sure"]
+    else:  # Datum der KI: sicher nur, wenn es mit einem eindeutig erkannten Datum übereinstimmt
+        p["date_sure"] = bool(da["sure"] and da["date"] == p["doc_date"])
     if not p.get("doc_type"):
         dt = extract.detect_doc_type(text)
         if dt:
@@ -310,6 +326,9 @@ def decide(conn: sqlite3.Connection, document_id: int, cand: Candidate) -> str:
         blockers.append("Mietobjekt unklar")
     if not auto_file:
         blockers.append("automatische Ablage ausgeschaltet")
+    if p.get("property_chosen") and doc["upload_area"] == "vermietung" and area_key == "vermietung" and p.get("category_id"):
+        # Objekt haben Sie beim Upload gewählt: direkt ablegen; Ordner prüfen Sie unter „Automatisch abgelegt“
+        blockers = [b for b in blockers if not b.startswith("Sicherheit")]
 
     if p.get("correspondent_name") and not p.get("correspondent_id"):
         p["correspondent_id"] = get_or_create_correspondent(conn, p["correspondent_name"])
@@ -322,6 +341,9 @@ def decide(conn: sqlite3.Connection, document_id: int, cand: Candidate) -> str:
     updates: dict[str, Any] = {}
     if p.get("doc_date") and not doc["doc_date"]:
         updates["doc_date"] = p["doc_date"]
+        updates["date_status"] = "sure" if p.get("date_sure") else "unsure"
+    if p.get("date_candidates") is not None:
+        updates["date_candidates"] = json.dumps(p["date_candidates"], ensure_ascii=False)
     if p.get("correspondent_id") and not doc["correspondent_id"]:
         updates["correspondent_id"] = p["correspondent_id"]
     # Nur nichtssagende Namen ersetzen (IMG_…, Scan …, document(3)); selbst vergebene Dateinamen bleiben.
@@ -393,7 +415,8 @@ def apply_preset(conn: sqlite3.Connection, document_id: int, preset: dict[str, A
 
     correspondents = rows(conn.execute("SELECT id, name, aliases FROM correspondents ORDER BY name"))
     corr_id, _ = extract.detect_correspondent(text, correspondents)
-    doc_date, _ = extract.detect_date(text)
+    da = extract.date_analysis(text)
+    doc_date = da["date"]
     doc_type = extract.detect_doc_type(text)
     title = doc["title"]
     if _GENERIC_NAME.fullmatch(title or ""):
@@ -407,10 +430,12 @@ def apply_preset(conn: sqlite3.Connection, document_id: int, preset: dict[str, A
     ts = now()
     conn.execute(
         "UPDATE documents SET area_id = ?, category_id = ?, property_id = ?, correspondent_id = COALESCE(correspondent_id, ?), "
+        "date_status = CASE WHEN doc_date IS NULL AND ? IS NOT NULL THEN ? ELSE date_status END, date_candidates = ?, "
         "doc_date = COALESCE(doc_date, ?), doc_type = CASE WHEN doc_type = '' THEN COALESCE(?, '') ELSE doc_type END, "
         "title = ?, status = 'filed', filed_by = 'import', filed_reason = ?, confidence = 1.0, confirmed = 1, "
         "filed_at = ?, updated_at = ? WHERE id = ?",
-        (area_id, category_id, preset.get("property_id"), corr_id, doc_date, doc_type, title, reason, ts, ts, document_id),
+        (area_id, category_id, preset.get("property_id"), corr_id, doc_date, "sure" if da["sure"] else "unsure",
+         json.dumps(da["candidates"], ensure_ascii=False), doc_date, doc_type, title, reason, ts, ts, document_id),
     )
     for name in preset.get("tags") or []:
         conn.execute("INSERT OR IGNORE INTO tags(name) VALUES(?)", (name,))

@@ -33,6 +33,7 @@ def init_db() -> None:
         _autofill_expenses(conn)
         _fix_dates(conn)
         _assume_paid(conn)
+        _assess_dates(conn)
     finally:
         conn.close()
 
@@ -170,3 +171,18 @@ def _assume_paid(conn) -> None:
         logging.getLogger("smartarchive").info("Zahlungsdatum angenommen bei %s Positionen", n)
     except Exception:  # noqa: BLE001
         logging.getLogger("smartarchive").exception("Zahlungsdatum-Annahme fehlgeschlagen")
+
+
+def _assess_dates(conn) -> None:
+    """Einmalig: unsichere Belegdaten bei vorhandenen Ausgaben markieren (Rückfrage im Eingang)."""
+    from . import invoices
+    from .db import get_setting, set_setting, tx
+    if get_setting(conn, "date_status_v1"):
+        return
+    try:
+        with tx(conn):
+            n = invoices.assess_dates(conn)
+            set_setting(conn, "date_status_v1", True)
+        logging.getLogger("smartarchive").info("Unsichere Belegdaten markiert: %s", n)
+    except Exception:  # noqa: BLE001
+        logging.getLogger("smartarchive").exception("Datumsprüfung fehlgeschlagen")

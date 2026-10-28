@@ -58,7 +58,7 @@ async def dashboard(request: Request, conn, user):
         "counts": {"inbox": counts.get("inbox", 0), "processing": counts.get("processing", 0),
                    "error": counts.get("error", 0), "filed": counts.get("filed", 0), "to_review": to_review,
                    "transactions": conn.execute("SELECT COUNT(*) FROM transactions WHERE status IN ('open','auto')").fetchone()[0],
-                   "undated": len(invoices.undated(conn))},
+                   "undated": len(invoices.undated(conn)) + len(invoices.unsure_dates(conn))},
         "per_area": per_area,
         "recent": recent,
         "year": year,

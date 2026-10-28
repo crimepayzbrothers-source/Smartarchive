@@ -502,3 +502,6 @@ dialog.scanner::backdrop { background: #0b1013; }
 .amount-tag { font-size: .72rem; padding: .05rem .45rem; border-radius: 99px; background: var(--surface-2); color: var(--ink-2); white-space: nowrap; }
 .amount-tag.good { background: var(--vermietung-soft); color: var(--ok); }
 .small-link { font-size: .86rem; padding: 0; min-height: 0; justify-content: flex-start; }
+.date-confirm { align-self: flex-start; }
+.date-others { display: flex; flex-direction: column; gap: .35rem; }
+.upload-property { display: flex; flex-direction: column; gap: .4rem; margin-top: -.3rem; }

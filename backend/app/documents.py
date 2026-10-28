@@ -33,13 +33,19 @@ def find_duplicate(conn: sqlite3.Connection, sha: str) -> dict | None:
 
 
 def ingest(conn: sqlite3.Connection, uploads: list[tuple[str, bytes]], upload_area: str = "auto",
-           combine_images: bool = False, captures: dict[int, tuple[str, bytes]] | None = None) -> dict[str, list]:
+           combine_images: bool = False, captures: dict[int, tuple[str, bytes]] | None = None,
+           property_id: int | None = None) -> dict[str, list]:
     """Nimmt Dateien entgegen. Bilder können zu einem Dokument zusammengefasst werden.
 
     captures: unbearbeitete Kamerafotos zu zugeschnittenen Scans (Index in uploads). Sie werden als
     Rolle „capture“ unverändert aufbewahrt, aber nicht als Seite verwendet.
     """
     captures = captures or {}
+    if property_id is not None:
+        if upload_area != "vermietung":
+            raise IngestError("Ein Mietobjekt kann nur im Bereich Vermietung gewählt werden.")
+        if not conn.execute("SELECT 1 FROM properties WHERE id = ? AND archived = 0", (property_id,)).fetchone():
+            raise IngestError("Mietobjekt existiert nicht.")
     if upload_area not in ("auto", "privat", "vermietung"):
         raise IngestError("Unbekannter Bereich")
     created: list[int] = []
@@ -75,8 +81,9 @@ def ingest(conn: sqlite3.Connection, uploads: list[tuple[str, bytes]], upload_ar
         with tx(conn):
             title = _stem(group[0][0]) if len(group) == 1 else f"Scan {ts[:10]} ({len(group)} Seiten)"
             doc_id = conn.execute(
-                "INSERT INTO documents(title, original_name, upload_area, status, created_at, updated_at) VALUES(?,?,?,?,?,?)",
-                (title, group[0][0], upload_area, "processing", ts, ts),
+                "INSERT INTO documents(title, original_name, upload_area, property_id, status, created_at, updated_at) "
+                "VALUES(?,?,?,?,?,?,?)",
+                (title, group[0][0], upload_area, property_id, "processing", ts, ts),
             ).lastrowid
             for pos, (name, data, mime, idx) in enumerate(group):
                 sha, rel = storage.store_original(data, mime)

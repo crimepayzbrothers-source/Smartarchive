@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { upload } from "../api";
-import { go, useToast } from "../lib";
+import { go, useMeta, useToast } from "../lib";
 import { Icon, Sheet } from "./ui";
 import Scanner from "./Scanner";
 
@@ -20,6 +20,13 @@ export default function UploadSheet({ open, onClose, defaultArea = "auto", onDon
   const cameraRef = useRef<HTMLInputElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const toast = useToast();
+  const { meta } = useMeta();
+  const properties = meta?.properties || [];
+  const [propertyId, setPropertyId] = useState<number | null>(null);
+  useEffect(() => {
+    // ein einziges Objekt: gleich vorauswählen
+    setPropertyId(area === "vermietung" && properties.length === 1 ? properties[0].id : null);
+  }, [area, properties.length]); // eslint-disable-line react-hooks/exhaustive-deps
   // Scanner: Warteschlange neuer Fotos bzw. ein vorhandenes Bild zum Nachbearbeiten
   const [scanQueue, setScanQueue] = useState<File[]>([]);
   const [rescan, setRescan] = useState<number | null>(null);
@@ -67,6 +74,7 @@ export default function UploadSheet({ open, onClose, defaultArea = "auto", onDon
     if (!items.length) return;
     const form = new FormData();
     form.append("area", area);
+    if (area === "vermietung" && propertyId) form.append("property_id", String(propertyId));
     form.append("combine", combine && images.length > 1 ? "1" : "0");
     items.forEach((i, idx) => {
       form.append("files", i.file, i.file.name || "scan.jpg");
@@ -105,8 +113,25 @@ export default function UploadSheet({ open, onClose, defaultArea = "auto", onDon
             </label>
           ))}
         </fieldset>
+        {area === "vermietung" && properties.length > 0 && (
+          <div className="upload-property">
+            <p className="small-title">Mietobjekt</p>
+            <div className="choice-chips" role="radiogroup" aria-label="Mietobjekt">
+              {properties.map((p) => (
+                <button key={p.id} type="button" role="radio" aria-checked={propertyId === p.id}
+                  className={`choice vermietung ${propertyId === p.id ? "on" : ""}`} onClick={() => setPropertyId(p.id)}>
+                  <Icon name="building" size={16} /> {p.name}
+                </button>
+              ))}
+              {properties.length > 1 && (
+                <button type="button" role="radio" aria-checked={propertyId === null}
+                  className={`choice ${propertyId === null ? "on" : ""}`} onClick={() => setPropertyId(null)}>Automatisch erkennen</button>
+              )}
+            </div>
+          </div>
+        )}
         <p className="hint">
-          {area === "auto"
+          {area === "vermietung" && propertyId ? `Wird direkt „${properties.find((p) => p.id === propertyId)?.name}“ zugeordnet; Rechnungsbeträge werden als Ausgabe erfasst.` : area === "auto"
             ? "Die App schlägt den Bereich vor; Sie bestätigen ihn im Eingang."
             : `Sichere Treffer werden direkt in „${area === "privat" ? "Privat" : "Vermietung"}“ abgelegt.`}
         </p>

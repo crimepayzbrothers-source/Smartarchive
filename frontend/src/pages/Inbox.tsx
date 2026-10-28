@@ -87,12 +87,13 @@ export default function Inbox({ onCapture }: { onCapture: () => void }) {
 
       {undated.length > 0 && (
         <section className="group">
-          <h2 className="group-title attention">Datum fehlt <span className="count">{undated.length}</span></h2>
-          <p className="hint">In diesen Belegen war kein Datum lesbar. Antippen öffnet den Beleg zum Nachsehen.</p>
+          <h2 className="group-title attention">Datum prüfen <span className="count">{undated.length}</span></h2>
+          <p className="hint">Hier war das Datum nicht lesbar oder nicht eindeutig. „Beleg ansehen“ öffnet das Dokument.</p>
           <div className="doc-list">
             {undated.map((d: any) => (
               <DocRow key={d.id} doc={d}>
-                <DateQuestion docId={d.id} amount={d.expense?.amount_cents} onChanged={reload} compact />
+                <DateQuestion docId={d.id} amount={d.expense?.amount_cents} onChanged={reload} compact
+                  suggestion={d.date_status === "unsure" ? d.doc_date : null} candidates={d.date_candidates || []} />
               </DocRow>
             ))}
           </div>

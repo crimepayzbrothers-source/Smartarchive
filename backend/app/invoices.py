@@ -400,3 +400,25 @@ def _ai_extract(conn: sqlite3.Connection, text: str) -> dict[str, Any] | None:
     if res.get("expense_category") in EXPENSE_KEYS:
         out["expense_category"] = res["expense_category"]
     return out
+
+
+def unsure_dates(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Positionen, deren Belegdatum nicht zweifelsfrei erkannt wurde (Vorschlag zur Bestätigung)."""
+    return rows(conn.execute(
+        "SELECT e.id AS expense_id, e.amount_cents, e.payee, e.document_id, p.name AS property_name FROM expenses e "
+        "JOIN documents d ON d.id = e.document_id LEFT JOIN properties p ON p.id = e.property_id "
+        "WHERE d.date_status = 'unsure' AND d.doc_date IS NOT NULL AND d.deleted_at IS NULL "
+        "AND e.id = (SELECT MIN(id) FROM expenses x WHERE x.document_id = d.id) ORDER BY e.id"))
+
+
+def assess_dates(conn: sqlite3.Connection) -> int:
+    """Einmalig: Datumssicherheit für Belege mit Ausgaben bestimmen (vorher nicht erfasst)."""
+    n = 0
+    for d in rows(conn.execute(_DOC_SELECT + " WHERE d.date_status IS NULL AND d.doc_date IS NOT NULL AND d.deleted_at IS NULL "
+                               "AND EXISTS (SELECT 1 FROM expenses e WHERE e.document_id = d.id)")):
+        a = extract.date_analysis(d.get("content") or "")
+        sure = a["sure"] and a["date"] == d["doc_date"]
+        conn.execute("UPDATE documents SET date_status = ?, date_candidates = ? WHERE id = ?",
+                     ("sure" if sure else "unsure", json.dumps(a["candidates"], ensure_ascii=False), d["id"]))
+        n += 0 if sure else 1
+    return n
