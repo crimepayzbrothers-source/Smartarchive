@@ -1,10 +1,10 @@
 // Service Worker: App-Hülle zwischenspeichern und „Teilen mit SmartArchive“ annehmen.
 // Dokumente und API-Antworten werden bewusst NICHT zwischengespeichert.
-const SHELL = "sa-shell-v1";
+const SHELL = "sa-shell-v2";
 const SHARE = "sa-share";
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(SHELL).then((c) => c.addAll(["/", "/assets/main.js", "/assets/main.css", "/icon.svg"])).then(() => self.skipWaiting()));
+  event.waitUntil(caches.open(SHELL).then((c) => c.addAll(["/", "/icon.svg"])).then(() => self.skipWaiting()));
 });
 
 self.addEventListener("activate", (event) => {
