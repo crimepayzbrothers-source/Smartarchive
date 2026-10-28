@@ -306,7 +306,7 @@ def to_xlsx(conn: sqlite3.Connection, year: int, property_id: int | None = None)
     ws.title = "Übersicht"
     ws.append([f"Aufwendungen Vermietung {year}"])
     ws["A1"].font = Font(bold=True, size=14)
-    ws.append([f"{len(items)} Positionen, {len(j['beleg'])} Belege. Datum = Zahlungsdatum, ersatzweise Rechnungsdatum "
+    ws.append([f"{len(items)} Position{'' if len(items) == 1 else 'en'}, {len(j['beleg'])} Beleg{'' if len(j['beleg']) == 1 else 'e'}. Datum = Zahlungsdatum, ersatzweise Rechnungsdatum "
                "(Spalte „Jahr nach“). Dokumentation, keine steuerliche Bewertung."])
     if j["undated"]:
         ws.append([f"Hinweis: {len(j['undated'])} Position(en) ohne Datum sind keinem Jahr zugeordnet und hier nicht enthalten."])
@@ -373,97 +373,152 @@ def _sheet_title(name: str) -> str:
     return (name.strip() or "Objekt")[:31]
 
 
+STAMP_BAND = 22  # Punkt: Rand über dem Beleg für die Belegnummer
+
+
 def _stamp(page: Any, text: str) -> None:
-    """Belegnummer oben rechts auf eine Belegseite stempeln (Overlay, Original bleibt im Archiv unverändert)."""
-    from pypdf import PdfReader
+    """Belegnummer in einen zusätzlichen Rand über der Belegseite setzen – nie über den Belegtext.
+
+    Die Seite wird oben um STAMP_BAND verlängert; das Original im Archiv bleibt unverändert.
+    """
+    from pypdf import PdfReader, Transformation
     from reportlab.lib import colors
     from reportlab.pdfgen import canvas
 
-    w, h = float(page.mediabox.width), float(page.mediabox.height)
+    box = page.mediabox
+    x0, y0, w, h = float(box.left), float(box.bottom), float(box.width), float(box.height)
+    top = y0 + h
+    page.mediabox.upper_right = (x0 + w, top + STAMP_BAND)
+    page.cropbox.lower_left = (x0, y0)
+    page.cropbox.upper_right = (x0 + w, top + STAMP_BAND)
     buf = io.BytesIO()
-    c = canvas.Canvas(buf, pagesize=(w, h))
+    c = canvas.Canvas(buf, pagesize=(w, h + STAMP_BAND))
     c.setFont("Helvetica-Bold", 9)
     tw = c.stringWidth(text, "Helvetica-Bold", 9)
-    c.setFillColor(colors.white)
     c.setStrokeColor(colors.HexColor("#0d5c66"))
-    c.rect(w - tw - 24, h - 26, tw + 14, 16, fill=1, stroke=1)
+    c.setFillColor(colors.white)
+    c.rect(w - tw - 22, h + 3, tw + 14, 15, fill=1, stroke=1)
     c.setFillColor(colors.HexColor("#0d5c66"))
-    c.drawString(w - tw - 17, h - 21.5, text)
+    c.drawString(w - tw - 15, h + 7, text)
     c.save()
-    page.merge_page(PdfReader(io.BytesIO(buf.getvalue())).pages[0])
+    overlay = PdfReader(io.BytesIO(buf.getvalue())).pages[0]
+    page.merge_transformed_page(overlay, Transformation().translate(x0, y0))
 
 
-def to_pdf_bundle(conn: sqlite3.Connection, year: int, property_id: int | None = None) -> bytes:
-    """Prüfpaket: Monatsübersicht, chronologische Belegliste mit Monatssummen, danach alle Belege mit Belegnummer."""
+def to_pdf_bundle(conn: sqlite3.Connection, year: int, property_id: int | None = None, with_receipts: bool = True) -> bytes:
+    """Prüfpaket: Monatsübersicht, chronologische Belegliste mit Monatssummen, danach (optional) alle Belege.
+
+    Alle Tabellenzellen sind umbrechende Absätze mit festen Spaltenbreiten – lange Texte laufen nie in die
+    Nachbarspalte, sondern umbrechen innerhalb der Zelle.
+    """
     from pypdf import PdfReader, PdfWriter
     from reportlab.lib import colors
+    from reportlab.lib.enums import TA_RIGHT
     from reportlab.lib.pagesizes import A4, landscape
-    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.units import mm
     from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    from xml.sax.saxutils import escape
 
     j = journal(conn, year, property_id)
     items = j["items"]
     styles = getSampleStyleSheet()
-    small = styles["BodyText"].clone("small", fontSize=7.5, leading=9)
+    # Umbruch zwischen Wörtern; nur Wörter, die breiter als die Spalte sind, werden getrennt (splitLongWords)
+    cell = ParagraphStyle("cell", fontName="Helvetica", fontSize=7.5, leading=9, splitLongWords=1)
+    cell_r = ParagraphStyle("cell_r", parent=cell, alignment=TA_RIGHT)
+    cell_b = ParagraphStyle("cell_b", parent=cell, fontName="Helvetica-Bold")
+    cell_br = ParagraphStyle("cell_br", parent=cell_r, fontName="Helvetica-Bold")
+    head = ParagraphStyle("head", parent=cell, fontName="Helvetica-Bold", textColor=colors.white)
+    head_r = ParagraphStyle("head_r", parent=head, alignment=TA_RIGHT)
+
+    def P(text: Any, style: ParagraphStyle = cell) -> Paragraph:
+        return Paragraph(escape(str(text if text is not None else "")), style)
+
+    def amount(cents: int) -> str:
+        return euro(cents).replace(" €", "")
+
+    title = f"Aufwendungen Vermietung {year}" + ("" if with_receipts else " – Übersicht ohne Belege")
     buf = io.BytesIO()
     pdf = SimpleDocTemplate(buf, pagesize=landscape(A4), leftMargin=12 * mm, rightMargin=12 * mm, topMargin=12 * mm,
-                            bottomMargin=12 * mm, title=f"Aufwendungen Vermietung {year}")
-    head = colors.HexColor("#2F3A4A")
-    base_style = [("BACKGROUND", (0, 0), (-1, 0), head), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-                  ("FONTSIZE", (0, 0), (-1, -1), 7.5), ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                  ("LINEBELOW", (0, 0), (-1, -1), 0.25, colors.HexColor("#CCCCCC"))]
-    story: list[Any] = [
-        Paragraph(f"Aufwendungen Vermietung {year}", styles["Title"]),
-        Paragraph(f"{len(items)} Positionen, {len(j['beleg'])} Belege. Maßgebliches Datum: Zahlungsdatum, ersatzweise "
-                  "Rechnungsdatum. Die Belege folgen nach der Liste in Reihenfolge der Belegnummer; die Nummer steht oben "
-                  "rechts auf jedem Beleg. Erstellt mit SmartArchive – Dokumentation, keine steuerliche Bewertung.", styles["Normal"]),
-        Spacer(1, 5 * mm),
-    ]
-    if j["undated"]:
-        story += [Paragraph(f"Hinweis: {len(j['undated'])} Position(en) ohne Datum sind keinem Jahr zugeordnet und nicht enthalten.",
-                            styles["Normal"]), Spacer(1, 3 * mm)]
+                            bottomMargin=14 * mm, title=title)
+    usable = landscape(A4)[0] - 24 * mm
 
-    # Monatsübersicht je Objekt
-    data = [["Objekt", *[m[:3] for m in MONTHS], "Summe"]]
-    for prop in j["properties"]:
-        vals = [j["by_month"].get((prop, m), 0) for m in range(1, 13)]
-        data.append([Paragraph(prop, small), *[euro(v) if v else "–" for v in vals], euro(sum(vals))])
-    totals = [sum(j["by_month"].get((p_, m), 0) for p_ in j["properties"]) for m in range(1, 13)]
-    data.append(["Gesamt", *[euro(v) if v else "–" for v in totals], euro(sum(totals))])
-    t = Table(data, colWidths=[40 * mm, *[16.5 * mm] * 12, 22 * mm], repeatRows=1)
-    t.setStyle(TableStyle(base_style + [("ALIGN", (1, 0), (-1, -1), "RIGHT"), ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold")]))
-    story += [t, PageBreak()]
+    def footer(canvas: Any, doc: Any) -> None:
+        canvas.saveState()
+        canvas.setFont("Helvetica", 7)
+        canvas.setFillColor(colors.HexColor("#666666"))
+        canvas.drawString(12 * mm, 7 * mm, f"{title} · erstellt mit SmartArchive · Dokumentation, keine steuerliche Bewertung")
+        canvas.drawRightString(landscape(A4)[0] - 12 * mm, 7 * mm, f"Seite {doc.page}")
+        canvas.restoreState()
+
+    base_style = [("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2F3A4A")), ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                  ("LEFTPADDING", (0, 0), (-1, -1), 3), ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+                  ("TOPPADDING", (0, 0), (-1, -1), 2.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5),
+                  ("LINEBELOW", (0, 0), (-1, -1), 0.25, colors.HexColor("#CCCCCC"))]
+    intro = (f"{len(items)} Position{'' if len(items) == 1 else 'en'}, {len(j['beleg'])} Beleg{'' if len(j['beleg']) == 1 else 'e'}. Maßgebliches Datum: Zahlungsdatum, ersatzweise Rechnungsdatum "
+             "(„Zahlung (angenommen)“ = Rechnungsdatum übernommen). Beträge in Euro. ")
+    intro += ("Die Belege folgen nach der Liste in Reihenfolge der Belegnummer; die Nummer steht oben rechts auf jedem Beleg."
+              if with_receipts else "Die Belegnummern verweisen auf die Belege im Archiv bzw. im Prüfpaket mit Belegen.")
+    story: list[Any] = [Paragraph(escape(title), styles["Title"]), Paragraph(escape(intro), styles["Normal"]), Spacer(1, 5 * mm)]
+    if j["undated"]:
+        story += [Paragraph(escape(f"Hinweis: {len(j['undated'])} Position(en) ohne Datum sind keinem Jahr zugeordnet und "
+                                   "nicht enthalten."), styles["Normal"]), Spacer(1, 3 * mm)]
+
+    # Monatsübersicht je Objekt, in zwei Halbjahren – breite Spalten, Beträge brechen nie um
+    story.append(Paragraph("Monatsübersicht je Objekt", styles["Heading2"]))
+    w_obj, w_sum = 46 * mm, 30 * mm
+    for half, months in (("1. Halbjahr", range(1, 7)), ("2. Halbjahr", range(7, 13))):
+        last = half == "2. Halbjahr"
+        sums_head = [P("Summe Halbjahr", head_r)] + ([P("Summe Jahr", head_r)] if last else [])
+        n_sum = len(sums_head)
+        w_month = (usable - w_obj - w_sum * n_sum) / 6
+        data = [[P(f"Objekt – {half}", head), *[P(MONTHS[m - 1], head_r) for m in months], *sums_head]]
+        for prop in j["properties"]:
+            vals = [j["by_month"].get((prop, m), 0) for m in months]
+            year_total = sum(j["by_month"].get((prop, m), 0) for m in range(1, 13))
+            data.append([P(prop), *[P(amount(v) if v else "–", cell_r) for v in vals], P(amount(sum(vals)), cell_br),
+                         *([P(amount(year_total), cell_br)] if last else [])])
+        tot = [sum(j["by_month"].get((p_, m), 0) for p_ in j["properties"]) for m in months]
+        grand = sum(e["amount_cents"] for e in items)
+        data.append([P("Gesamt", cell_b), *[P(amount(v) if v else "–", cell_br) for v in tot], P(amount(sum(tot)), cell_br),
+                     *([P(amount(grand), cell_br)] if last else [])])
+        t = Table(data, colWidths=[w_obj, *[w_month] * 6, *[w_sum] * n_sum], repeatRows=1)
+        t.setStyle(TableStyle(base_style))
+        story += [t, Spacer(1, 5 * mm)]
+    story.append(PageBreak())
 
     # Chronologische Liste mit Monatssummen
-    story.append(Paragraph(f"Belegliste {year} (chronologisch)", styles["Heading2"]))
-    data = [["Nr.", "Beleg", "Datum", "Jahr nach", "Objekt", "Aussteller", "Kategorie", "Notiz", "Erfassung", "Betrag"]]
+    story.append(Paragraph(escape(f"Belegliste {year} (chronologisch)"), styles["Heading2"]))
+    widths_mm = [9, 17, 17, 21, 28, 40, 40, 42, 25, 22]
+    scale = usable / (sum(widths_mm) * mm)
+    col_w = [w * mm * scale for w in widths_mm]
+    hdr = ["Nr.", "Beleg", "Datum", "Jahr nach", "Objekt", "Aussteller", "Kategorie", "Notiz / Rechnungsnr.", "Erfassung", "Betrag"]
+    data = [[P(h, head_r if h == "Betrag" else head) for h in hdr]]
     extra: list[tuple] = []
     month, msum = None, 0
 
     def close() -> None:
         if month is not None:
-            data.append(["", "", "", "", "", "", Paragraph(f"<b>Summe {month}</b>", small), "", "", euro(msum)])
+            data.append([P(""), P(""), P(""), P(""), P(""), P(""), P(f"Summe {month}", cell_b), P(""), P(""), P(amount(msum), cell_br)])
             extra.append(("BACKGROUND", (0, len(data) - 1), (-1, len(data) - 1), colors.HexColor("#E8EEF0")))
-            extra.append(("FONTNAME", (9, len(data) - 1), (9, len(data) - 1), "Helvetica-Bold"))
 
     for e in items:
         if e["month_label"] != month:
             close()
             month, msum = e["month_label"], 0
-        data.append([str(e["lfd"]), e["beleg_label"], _fmt_date(e["booking_date"]), e["basis"],
-                     Paragraph(e["property_name"] or "", small), Paragraph((e["payee"] or "")[:60], small),
-                     Paragraph(e["category_label"], small), Paragraph((e["note"] or "")[:80], small),
-                     e["origin_label"], euro(e["amount_cents"])])
+        data.append([P(e["lfd"]), P(e["beleg_label"]), P(_fmt_date(e["booking_date"])), P(e["basis"]), P(e["property_name"] or ""),
+                     P(e["payee"] or ""), P(e["category_label"]), P(e["note"] or ""), P(e["origin_label"]),
+                     P(amount(e["amount_cents"]), cell_r)])
         msum += e["amount_cents"]
     close()
-    data.append(["", "", "", "", "", "", Paragraph("<b>Gesamt</b>", small), "", "", euro(sum(e["amount_cents"] for e in items))])
-    t = Table(data, colWidths=[10 * mm, 16 * mm, 18 * mm, 15 * mm, 30 * mm, 42 * mm, 46 * mm, 44 * mm, 28 * mm, 24 * mm],
-              repeatRows=1)
-    t.setStyle(TableStyle(base_style + extra + [("ALIGN", (9, 0), (9, -1), "RIGHT"),
-                                                ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold")]))
+    data.append([P(""), P(""), P(""), P(""), P(""), P(""), P("Gesamt", cell_b), P(""), P(""),
+                 P(amount(sum(e["amount_cents"] for e in items)), cell_br)])
+    t = Table(data, colWidths=col_w, repeatRows=1)
+    t.setStyle(TableStyle(base_style + extra))
     story.append(t)
-    pdf.build(story)
+    pdf.build(story, onFirstPage=footer, onLaterPages=footer)
+    if not with_receipts:
+        return buf.getvalue()
 
     writer = PdfWriter()
     for page in PdfReader(io.BytesIO(buf.getvalue())).pages:

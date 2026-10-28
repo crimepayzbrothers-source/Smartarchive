@@ -86,3 +86,67 @@ def test_pdf_has_overview_list_and_stamped_receipts(client):
         assert f"Beleg {nr}" in reader.pages[2 + i].extract_text()
     titles = [o.title for o in reader.outline]
     assert titles[0].startswith("Beleg 1 · 02.01.2026 · 120,00 €")
+
+
+def _overlaps(page) -> list[tuple[str, str]]:
+    """Paare von Zeichen, die sich überlagern (unterschiedliche Stellen im Text), sowie Text außerhalb der Seite."""
+    chars = [c for c in page.chars if c["text"].strip()]
+    bad = []
+    for c in chars:
+        if c["x0"] < -0.5 or c["x1"] > page.width + 0.5 or c["top"] < -0.5 or c["bottom"] > page.height + 0.5:
+            bad.append((c["text"], "außerhalb"))
+    chars.sort(key=lambda c: c["x0"])
+    for i, a in enumerate(chars):
+        for b in chars[i + 1:]:
+            if b["x0"] >= a["x1"] - 0.3:
+                break
+            ix = min(a["x1"], b["x1"]) - max(a["x0"], b["x0"])
+            iy = min(a["bottom"], b["bottom"]) - max(a["top"], b["top"])
+            if ix > 0.6 and iy > 0.6:
+                bad.append((a["text"], b["text"]))
+    return bad
+
+
+def _long_data(client):
+    pid = client.post("/api/properties", json={"name": "Mehrfamilienhaus Hauptstraße 15 – Vorderhaus und Hinterhaus",
+                                               "address": "Hauptstraße 15, 55758 Schmidt-Hachenbach"}, headers=HEADERS).json()["id"]
+    doc = client.post("/api/upload", data={"area": "vermietung"}, headers=HEADERS,
+                      files=[("files", ("r.pdf", make_pdf(["Rechnungsdatum: 03.02.2026", "Gesamtbetrag 1.234.567,89 EUR"]),
+                                        "application/pdf"))]).json()["created"][0]
+    run_worker()
+    long_payee = "Sanitär- und Heizungsbau Mustermann & Söhne Gesellschaft mit beschränkter Haftung Niederlassung Bad Sobernheim"
+    long_note = "Rechnung Nr. RE-2026/0815-ABCDEFGHIJKLMNOPQRSTUVWXYZ Austausch Gasbrennwertkessel inkl. Abgasanlage und Montage"
+    for i in range(40):
+        client.post("/api/expenses", json={"document_id": doc if i == 0 else None, "property_id": pid,
+                                           "amount_cents": 123456789 if i % 7 == 0 else 1999 + i,
+                                           "category_key": "nicht_sofort" if i % 3 else "erhaltung_verteilt",
+                                           "invoice_date": f"2026-{(i % 12) + 1:02d}-15", "payee": long_payee, "note": long_note,
+                                           "status": "bestaetigt"}, headers=HEADERS)
+
+
+def test_pdf_without_receipts_and_no_text_overlap(client):
+    pdfplumber = __import__("pytest").importorskip("pdfplumber")
+    from pypdf import PdfReader
+    _long_data(client)
+    r = client.get("/api/export/expenses.pdf", params={"year": 2026, "belege": "0"})
+    assert r.status_code == 200 and "Uebersicht_Vermietung_2026" in r.headers["content-disposition"]
+    reader = PdfReader(io.BytesIO(r.content))
+    assert not reader.outline  # keine Belege angehängt
+    text = "\n".join(p.extract_text() for p in reader.pages)
+    assert "ohne Belege" in text and "Summe Dezember 2026" in text
+    with pdfplumber.open(io.BytesIO(r.content)) as pdf:
+        assert len(pdf.pages) >= 3  # lange Liste läuft über mehrere Seiten
+        for n, page in enumerate(pdf.pages, start=1):
+            assert _overlaps(page) == [], f"Überlappung auf Seite {n}: {_overlaps(page)[:5]}"
+
+
+def test_pdf_with_receipts_stamp_does_not_cover_receipt(client):
+    pdfplumber = __import__("pytest").importorskip("pdfplumber")
+    _long_data(client)
+    r = client.get("/api/export/expenses.pdf", params={"year": 2026})
+    with pdfplumber.open(io.BytesIO(r.content)) as pdf:
+        last = pdf.pages[-1]  # der angehängte Beleg
+        assert "Beleg 1" in last.extract_text()
+        assert last.height > 842  # um den Stempelrand verlängert
+        for n, page in enumerate(pdf.pages, start=1):
+            assert _overlaps(page) == [], f"Überlappung auf Seite {n}: {_overlaps(page)[:5]}"

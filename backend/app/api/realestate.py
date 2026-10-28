@@ -241,8 +241,9 @@ async def export_expenses(request: Request, conn, user):
         data, mime = await run_in_threadpool(exports.to_xlsx, conn, year, prop), \
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     elif fmt == "pdf":
-        data, mime = await run_in_threadpool(exports.to_pdf_bundle, conn, year, prop), "application/pdf"
-        name = f"Belegpaket_Vermietung_{year}" + (f"_Objekt{prop}" if prop else "")
+        receipts = request.query_params.get("belege", "1") != "0"
+        data, mime = await run_in_threadpool(exports.to_pdf_bundle, conn, year, prop, receipts), "application/pdf"
+        name = (f"Belegpaket_Vermietung_{year}" if receipts else f"Uebersicht_Vermietung_{year}") + (f"_Objekt{prop}" if prop else "")
     else:
         raise ApiError(404, "Unbekanntes Format")
     audit(conn, "exported", "expenses", None, {"format": fmt, "year": year, "property_id": prop})

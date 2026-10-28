@@ -79,6 +79,7 @@ export default function Expenses({ params }: { params: URLSearchParams }) {
           <a className="primary button" href={`/api/export/expenses.xlsx?${qs}`}><Icon name="down" size={18} /> Excel</a>
           <a className="secondary button" href={`/api/export/expenses.csv?${qs}`}>CSV</a>
           <a className="secondary button" href={`/api/export/expenses.pdf?${qs}`}>PDF mit Belegen</a>
+          <a className="secondary button" href={`/api/export/expenses.pdf?${qs}&belege=0`}>PDF ohne Belege</a>
         </div>
       </section>
 
