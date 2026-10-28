@@ -82,6 +82,11 @@ export default function DocumentPage({ id }: { id: number }) {
           ) : <div className="preview-placeholder"><Icon name="file" size={32} /><p>Keine Vorschau</p></div>}
           {doc.has_pdf && doc.status !== "processing" && <FileActions doc={doc} />}
           <div className="file-actions">
+            {doc.files.filter((f: any) => f.role === "capture").map((f: any) => (
+              <a key={f.id} className="ghost button small" href={`/api/documents/${id}/file?variant=capture&position=${f.position}&download=1`}>
+                Unbearbeitetes Foto{doc.files.filter((x: any) => x.role === "capture").length > 1 ? ` ${f.position + 1}` : ""} ({Math.round(f.size / 1024)} KB)
+              </a>
+            ))}
             {doc.files.filter((f: any) => f.role === "original").map((f: any) => (
               <a key={f.id} className="ghost button small" href={`/api/documents/${id}/file?variant=original&position=${f.position}&download=1`}>
                 Original {f.original_name ? `„${f.original_name}“` : ""} ({Math.round(f.size / 1024)} KB)

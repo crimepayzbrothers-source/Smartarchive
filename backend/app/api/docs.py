@@ -94,7 +94,7 @@ def detail(conn, document_id: int) -> dict[str, Any]:
 @endpoint()
 async def upload(request: Request, conn, user):
     limit = config.settings.max_upload_mb * 1024 * 1024
-    form = await request.form(max_files=50, max_fields=10)
+    form = await request.form(max_files=100, max_fields=60)
     area = str(form.get("area") or "auto")
     combine = str(form.get("combine") or "") in ("1", "true", "ja")
     uploads: list[tuple[str, bytes]] = []
@@ -106,11 +106,19 @@ async def upload(request: Request, conn, user):
             raise ApiError(413, f"„{item.filename}“ ist größer als {config.settings.max_upload_mb} MB.")
         if data:
             uploads.append((item.filename or "Dokument", data))
+    # unbearbeitete Kamerafotos zu zugeschnittenen Scans
+    captures: dict[int, tuple[str, bytes]] = {}
+    cap_files = [c for c in form.getlist("captures") if hasattr(c, "read")]
+    cap_index = [str(i) for i in form.getlist("capture_index")]
+    for item, idx in zip(cap_files, cap_index):
+        data = await item.read()
+        if idx.isdigit() and data and len(data) <= limit and int(idx) < len(uploads):
+            captures[int(idx)] = (item.filename or "Foto.jpg", data)
     await form.close()
     if not uploads:
         raise ApiError(400, "Keine Datei erhalten.")
     try:
-        result = await run_in_threadpool(documents.ingest, conn, uploads, area, combine)
+        result = await run_in_threadpool(documents.ingest, conn, uploads, area, combine, captures)
     except documents.IngestError as exc:
         raise ApiError(400, str(exc)) from None
     return result
@@ -482,11 +490,11 @@ async def get_file(request: Request, conn, user):
     doc_id = path_int(request)
     variant = request.query_params.get("variant", "pdf")
     download = request.query_params.get("download") == "1"
-    if variant == "original":
+    if variant in ("original", "capture"):
         pos = int_param(request, "position") or 0
-        files = [f for f in documents.files_of(conn, doc_id, "original") if f["position"] == pos]
+        files = [f for f in documents.files_of(conn, doc_id, variant) if f["position"] == pos]
         f = files[0] if files else None
-        filename = f["original_name"] if f else "original"
+        filename = f["original_name"] if f else variant
     else:
         f = documents.best_pdf(conn, doc_id)
         filename = documents.display_filename(conn, doc_id)

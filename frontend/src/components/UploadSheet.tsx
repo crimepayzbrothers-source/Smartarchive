@@ -2,8 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { upload } from "../api";
 import { go, useToast } from "../lib";
 import { Icon, Sheet } from "./ui";
+import Scanner from "./Scanner";
 
-type Picked = { file: File; url: string | null };
+// file = das, was hochgeladen wird; capture = unbearbeitetes Kamerafoto (bleibt als Original erhalten)
+type Picked = { file: File; url: string | null; capture?: File };
 
 export default function UploadSheet({ open, onClose, defaultArea = "auto", onDone, initialFiles }: {
   open: boolean; onClose: () => void; defaultArea?: string; onDone?: () => void; initialFiles?: File[];
@@ -18,6 +20,10 @@ export default function UploadSheet({ open, onClose, defaultArea = "auto", onDon
   const cameraRef = useRef<HTMLInputElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const toast = useToast();
+  // Scanner: Warteschlange neuer Fotos bzw. ein vorhandenes Bild zum Nachbearbeiten
+  const [scanQueue, setScanQueue] = useState<File[]>([]);
+  const [rescan, setRescan] = useState<number | null>(null);
+  const scanFile = rescan !== null ? (items[rescan]?.capture || items[rescan]?.file || null) : scanQueue[0] || null;
 
   useEffect(() => {
     if (open) {
@@ -34,12 +40,41 @@ export default function UploadSheet({ open, onClose, defaultArea = "auto", onDon
   };
   const images = items.filter((i) => i.file.type.startsWith("image/"));
 
+  const scanned = (scan: File, raw: File) => {
+    const item: Picked = { file: scan, url: URL.createObjectURL(scan), capture: raw };
+    if (rescan !== null) {
+      setItems((cur) => cur.map((x, j) => (j === rescan ? item : x)));
+      setRescan(null);
+    } else {
+      setItems((cur) => [...cur, item]);
+      setScanQueue((q) => q.slice(1));
+    }
+    setResult(null);
+  };
+  const skipped = (raw: File) => {
+    if (rescan !== null) setRescan(null);
+    else {
+      add([raw]);
+      setScanQueue((q) => q.slice(1));
+    }
+  };
+  const cancelScan = () => {
+    if (rescan !== null) setRescan(null);
+    else setScanQueue((q) => q.slice(1));
+  };
+
   const send = async () => {
     if (!items.length) return;
     const form = new FormData();
     form.append("area", area);
     form.append("combine", combine && images.length > 1 ? "1" : "0");
-    items.forEach((i) => form.append("files", i.file, i.file.name || "scan.jpg"));
+    items.forEach((i, idx) => {
+      form.append("files", i.file, i.file.name || "scan.jpg");
+      if (i.capture) {
+        form.append("captures", i.capture, i.capture.name || "foto.jpg");
+        form.append("capture_index", String(idx));
+      }
+    });
     setProgress(0);
     setError(null);
     try {
@@ -86,7 +121,8 @@ export default function UploadSheet({ open, onClose, defaultArea = "auto", onDon
             <Icon name="file" size={26} /> <span>Dateien wählen</span>
           </button>
           <p className="drop-hint">oder Dateien hierher ziehen</p>
-          <input ref={cameraRef} type="file" accept="image/*" capture="environment" hidden onChange={(e) => { add(e.target.files); e.target.value = ""; }} />
+          <input ref={cameraRef} type="file" accept="image/*" capture="environment" hidden
+            onChange={(e) => { const f = Array.from(e.target.files || []); if (f.length) setScanQueue((q) => [...q, ...f]); e.target.value = ""; }} />
           <input ref={fileRef} type="file" accept="application/pdf,image/*,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.odt,.ods,.odp,.rtf,.csv,.txt" multiple hidden onChange={(e) => { add(e.target.files); e.target.value = ""; }} />
         </div>
 
@@ -96,7 +132,10 @@ export default function UploadSheet({ open, onClose, defaultArea = "auto", onDon
               {items.map((i, idx) => (
                 <li key={idx}>
                   {i.url ? <img src={i.url} alt="" /> : <span className="pdf-chip"><Icon name="file" size={20} /></span>}
-                  <span className="picked-name">{i.file.name || `Foto ${idx + 1}`}</span>
+                  <span className="picked-name">{i.file.name || `Foto ${idx + 1}`}{i.capture ? <span className="muted"> · zugeschnitten</span> : null}</span>
+                  {i.file.type.startsWith("image/") && (
+                    <button className="icon-btn" aria-label="Zuschneiden" onClick={() => setRescan(idx)}><Icon name="crop" size={18} /></button>
+                  )}
                   <button className="icon-btn" aria-label="Entfernen" onClick={() => setItems(items.filter((_, j) => j !== idx))}><Icon name="close" size={18} /></button>
                 </li>
               ))}
@@ -107,7 +146,9 @@ export default function UploadSheet({ open, onClose, defaultArea = "auto", onDon
                 {images.length} Fotos als ein Dokument ablegen (mehrseitiger Beleg)
               </label>
             )}
-            {images.length === 1 && <p className="hint">Weitere Seite? Einfach noch ein Foto aufnehmen.</p>}
+            {images.length >= 1 && (
+              <button className="secondary" onClick={() => cameraRef.current?.click()}><Icon name="camera" size={18} /> Weitere Seite aufnehmen</button>
+            )}
           </>
         )}
 
@@ -126,6 +167,7 @@ export default function UploadSheet({ open, onClose, defaultArea = "auto", onDon
           {progress !== null ? `Lädt hoch … ${Math.round(progress * 100)} %` : items.length ? `${items.length} Datei${items.length > 1 ? "en" : ""} hochladen` : "Hochladen"}
         </button>
       </div>
+      <Scanner file={open ? scanFile : null} onDone={scanned} onSkip={skipped} onCancel={cancelScan} />
     </Sheet>
   );
 }

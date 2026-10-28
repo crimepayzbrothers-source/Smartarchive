@@ -33,8 +33,13 @@ def find_duplicate(conn: sqlite3.Connection, sha: str) -> dict | None:
 
 
 def ingest(conn: sqlite3.Connection, uploads: list[tuple[str, bytes]], upload_area: str = "auto",
-           combine_images: bool = False) -> dict[str, list]:
-    """Nimmt Dateien entgegen. Bilder können zu einem Dokument zusammengefasst werden."""
+           combine_images: bool = False, captures: dict[int, tuple[str, bytes]] | None = None) -> dict[str, list]:
+    """Nimmt Dateien entgegen. Bilder können zu einem Dokument zusammengefasst werden.
+
+    captures: unbearbeitete Kamerafotos zu zugeschnittenen Scans (Index in uploads). Sie werden als
+    Rolle „capture“ unverändert aufbewahrt, aber nicht als Seite verwendet.
+    """
+    captures = captures or {}
     if upload_area not in ("auto", "privat", "vermietung"):
         raise IngestError("Unbekannter Bereich")
     created: list[int] = []
@@ -42,7 +47,7 @@ def ingest(conn: sqlite3.Connection, uploads: list[tuple[str, bytes]], upload_ar
     rejected: list[dict] = []
 
     prepared = []
-    for name, data in uploads:
+    for idx, (name, data) in enumerate(uploads):
         mime = storage.sniff_mime(data, filename=name)
         if mime == "image/heic":
             rejected.append({"name": name, "reason": "HEIC wird nicht unterstützt. Bitte als JPEG aufnehmen."})
@@ -50,9 +55,9 @@ def ingest(conn: sqlite3.Connection, uploads: list[tuple[str, bytes]], upload_ar
         if mime not in ACCEPTED and not storage.is_office(mime):
             rejected.append({"name": name, "reason": "Erlaubt sind PDF, Bilder sowie Word-, Excel- und PowerPoint-Dateien."})
             continue
-        prepared.append((name, data, mime))
+        prepared.append((name, data, mime, idx))
 
-    groups: list[list[tuple[str, bytes, str]]]
+    groups: list[list[tuple[str, bytes, str, int]]]
     images = [p for p in prepared if p[2].startswith("image/")]
     if combine_images and len(images) > 1:
         groups = [[p] for p in prepared if not p[2].startswith("image/")] + [images]
@@ -60,7 +65,7 @@ def ingest(conn: sqlite3.Connection, uploads: list[tuple[str, bytes]], upload_ar
         groups = [[p] for p in prepared]
 
     for group in groups:
-        shas = [storage.sha256_bytes(d) for _, d, _ in group]
+        shas = [storage.sha256_bytes(d) for _, d, _, _ in group]
         if len(group) == 1:
             dup = find_duplicate(conn, shas[0])
             if dup:
@@ -73,16 +78,27 @@ def ingest(conn: sqlite3.Connection, uploads: list[tuple[str, bytes]], upload_ar
                 "INSERT INTO documents(title, original_name, upload_area, status, created_at, updated_at) VALUES(?,?,?,?,?,?)",
                 (title, group[0][0], upload_area, "processing", ts, ts),
             ).lastrowid
-            for pos, (name, data, mime) in enumerate(group):
+            for pos, (name, data, mime, idx) in enumerate(group):
                 sha, rel = storage.store_original(data, mime)
                 conn.execute(
                     "INSERT INTO files(document_id, role, sha256, mime, size, path, original_name, position, created_at) "
                     "VALUES(?,?,?,?,?,?,?,?,?)",
                     (doc_id, "original", sha, mime, len(data), rel, name, pos, ts),
                 )
+                if idx in captures:
+                    cap_name, cap_data = captures[idx]
+                    cap_mime = storage.sniff_mime(cap_data, filename=cap_name)
+                    if cap_mime.startswith("image/"):
+                        cap_sha, cap_rel = storage.store_original(cap_data, cap_mime)
+                        conn.execute(
+                            "INSERT INTO files(document_id, role, sha256, mime, size, path, original_name, position, created_at) "
+                            "VALUES(?,?,?,?,?,?,?,?,?)",
+                            (doc_id, "capture", cap_sha, cap_mime, len(cap_data), cap_rel, cap_name, pos, ts),
+                        )
             conn.execute("INSERT INTO document_text(document_id, content) VALUES(?, '')", (doc_id,))
             enqueue(conn, doc_id, "process")
-            audit(conn, "uploaded", "document", doc_id, {"files": [g[0] for g in group], "area": upload_area})
+            audit(conn, "uploaded", "document", doc_id, {"files": [g[0] for g in group], "area": upload_area,
+                                                          "zugeschnitten": sum(1 for g in group if g[3] in captures)})
         created.append(doc_id)
     return {"created": created, "duplicates": duplicates, "rejected": rejected}
 

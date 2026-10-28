@@ -301,7 +301,7 @@ def full_archive_zip(conn: sqlite3.Connection, fh: Any) -> None:
     with zipfile.ZipFile(fh, "w", compression=zipfile.ZIP_DEFLATED) as z:
         for d in docs:
             folder = f"{d['area_key'] or 'eingang'}/{d['id']:05d}_{display_filename(conn, d['id'])[:-4]}"
-            for f in rows(conn.execute("SELECT * FROM files WHERE document_id = ? AND role IN ('original','searchable','pdf')", (d["id"],))):
+            for f in rows(conn.execute("SELECT * FROM files WHERE document_id = ? AND role IN ('original','capture','searchable','pdf')", (d["id"],))):
                 try:
                     z.write(storage.abs_path(f["path"]), f"{folder}/{f['role']}_{f['position']}{_ext(f['mime'])}")
                 except (FileNotFoundError, ValueError):
