@@ -30,6 +30,9 @@ exec > >(tee -a "$LOG") 2>&1
 
 ping_hc /start
 
+# Sperren abgebrochener Läufe wegräumen (nur verwaiste, laufende Vorgänge bleiben unberührt)
+restic unlock || true
+
 # 1. Datenbank konsistent kopieren (läuft im Container, App bleibt online)
 docker compose exec -T app python -m app.backup
 
