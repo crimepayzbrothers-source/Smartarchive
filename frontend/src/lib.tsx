@@ -3,6 +3,26 @@ import { get } from "./api";
 
 // --- Routing (Hash, funktioniert ohne Server-Konfiguration) ----------------
 
+// Scrollposition je Adresse, damit die Rückkehr zu einer Liste an derselben Stelle landet.
+const scrollMemo = new Map<string, number>();
+const hashOf = (url: string) => { const i = url.indexOf("#"); return i < 0 ? "#/" : url.slice(i); };
+export const takeScroll = (hash = window.location.hash): number | null => {
+  const y = scrollMemo.get(hash || "#/");
+  scrollMemo.delete(hash || "#/");
+  return y ?? null;
+};
+
+// Letzte Seite außerhalb eines Dokuments: Ziel für „Zurück“, wenn kein Browser-Verlauf da ist
+// (z. B. nachdem Android die App beim Öffnen einer PDF neu geladen hat).
+const RETURN_KEY = "sa-return";
+function rememberReturn(hash: string) {
+  if (hash.startsWith("#/dokument/")) return;
+  try { sessionStorage.setItem(RETURN_KEY, hash.replace(/^#/, "") || "/"); } catch { /* privat */ }
+}
+export function returnTarget(): string {
+  try { return sessionStorage.getItem(RETURN_KEY) || "/"; } catch { return "/"; }
+}
+
 export function useRoute(): [string, URLSearchParams] {
   const read = () => {
     const raw = window.location.hash.replace(/^#/, "") || "/";
@@ -11,7 +31,13 @@ export function useRoute(): [string, URLSearchParams] {
   };
   const [route, setRoute] = useState(read);
   useEffect(() => {
-    const fn = () => { setRoute(read()); window.scrollTo(0, 0); };
+    rememberReturn(window.location.hash);
+    const fn = (e: HashChangeEvent) => {
+      scrollMemo.set(hashOf(e.oldURL), window.scrollY);
+      rememberReturn(window.location.hash);
+      setRoute(read());
+      window.scrollTo(0, 0);
+    };
     window.addEventListener("hashchange", fn);
     return () => window.removeEventListener("hashchange", fn);
   }, []);
@@ -20,6 +46,14 @@ export function useRoute(): [string, URLSearchParams] {
 
 export function go(path: string) {
   window.location.hash = path;
+}
+
+/** Ersetzt die Adresse der aktuellen Seite (z. B. Suchbegriff und Filter), ohne neuen Verlaufseintrag und ohne Neuladen. */
+export function replaceRoute(path: string, params: URLSearchParams) {
+  const qs = params.toString();
+  const hash = `#${path}${qs ? `?${qs}` : ""}`;
+  if (hash !== window.location.hash) history.replaceState(history.state, "", hash);
+  rememberReturn(hash);
 }
 
 // --- Stammdaten -------------------------------------------------------------

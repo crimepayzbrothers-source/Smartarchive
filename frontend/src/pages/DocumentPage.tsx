@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { centsToInput, date, del, get, money, parseMoney, patch, post, relative } from "../api";
-import { go, useLoad, useMeta, usePoll, useToast } from "../lib";
+import { go, returnTarget, useLoad, useMeta, usePoll, useToast } from "../lib";
 import { SuggestionBox } from "../components/Suggestion";
 import { InvoiceCard, needsInvoiceCard } from "../components/InvoiceCard";
 import { DateQuestion } from "../components/DateQuestion";
@@ -31,7 +31,7 @@ export default function DocumentPage({ id }: { id: number }) {
   }, [showText, text, id]);
 
   if (loading && !doc) return <Loading />;
-  if (error) return <div className="page"><BackButton /><ErrorBox text={error} /></div>;
+  if (error) return <div className="page"><BackButton fallback={returnTarget()} /><ErrorBox text={error} /></div>;
   if (!doc || !meta) return <Loading />;
 
   const pages = doc.page_count || 1;
@@ -52,7 +52,7 @@ export default function DocumentPage({ id }: { id: number }) {
   return (
     <div className={`page document ${doc.area_key || ""}`}>
       <header className="doc-head">
-        <BackButton />
+        <BackButton fallback={returnTarget()} />
         <div className="doc-head-main">
           <h1>{doc.title || "Ohne Titel"}</h1>
           <p className="muted">

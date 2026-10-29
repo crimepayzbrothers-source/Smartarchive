@@ -82,8 +82,8 @@ function Shell({ user, onLogout }: { user: any; onLogout: () => void }) {
   if (m && m[1] === "dokument") page = <DocumentPage id={Number(m[2])} />;
   else if (m && m[1] === "objekt") page = <PropertyPage id={Number(m[2])} />;
   else if (path === "/eingang") page = <Inbox key={refresh} onCapture={() => setCapture(true)} />;
-  else if (path === "/archiv") page = <Archive params={params} />;
-  else if (path === "/suche") page = <Archive params={params} searchMode />;
+  else if (path === "/archiv") page = <Archive key="archiv" params={params} />;
+  else if (path === "/suche") page = <Archive key="suche" params={params} searchMode />;
   else if (path === "/objekte") page = <Properties />;
   else if (path === "/ausgaben") page = <Expenses params={params} />;
   else if (path === "/einstellungen") page = <Settings user={user} onLogout={onLogout} />;

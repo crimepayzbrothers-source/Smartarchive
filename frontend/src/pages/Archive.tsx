@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { get } from "../api";
-import { useMeta } from "../lib";
+import { replaceRoute, takeScroll, useMeta } from "../lib";
 import { DocRow, Empty, ErrorBox, Icon, Loading, type DocItem } from "../components/ui";
 
 const YEARS = (() => {
@@ -8,35 +8,70 @@ const YEARS = (() => {
   return Array.from({ length: 12 }, (_, i) => y - i);
 })();
 
+// Zuletzt angezeigte Liste. Bei der Rückkehr aus einem Dokument erscheint sie sofort wieder,
+// statt leer neu zu laden; danach wird sie still aktualisiert.
+type ListCache = { key: string; items: DocItem[]; total: number; hint: string | null };
+let listCache: ListCache | null = null;
+const num = (v: string | null) => (v && /^\d+$/.test(v) ? Number(v) : null);
+
 export default function Archive({ params, searchMode = false }: { params: URLSearchParams; searchMode?: boolean }) {
   const { meta } = useMeta();
   const [area, setArea] = useState(params.get("bereich") || (searchMode ? "" : "privat"));
-  const [category, setCategory] = useState<number | null>(params.get("kategorie") ? Number(params.get("kategorie")) : null);
-  const [property, setProperty] = useState<number | null>(params.get("objekt") ? Number(params.get("objekt")) : null);
-  const [year, setYear] = useState<number | null>(null);
+  const [category, setCategory] = useState<number | null>(num(params.get("kategorie")));
+  const [property, setProperty] = useState<number | null>(num(params.get("objekt")));
+  const [year, setYear] = useState<number | null>(num(params.get("jahr")));
   const [tag, setTag] = useState<string>(params.get("tag") || "");
-  const [favorite, setFavorite] = useState(false);
+  const [favorite, setFavorite] = useState(params.get("favorit") === "1");
   const [q, setQ] = useState(params.get("q") || "");
   const [debounced, setDebounced] = useState(q);
-  const [items, setItems] = useState<DocItem[]>([]);
-  const [total, setTotal] = useState(0);
-  const [hint, setHint] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => { if (searchMode) inputRef.current?.focus(); }, [searchMode]);
-  useEffect(() => { const t = setTimeout(() => setDebounced(q), 250); return () => clearTimeout(t); }, [q]);
 
   const query = useMemo(() => ({
     q: debounced.trim(), area: area || undefined, category_id: category, property_id: area === "vermietung" ? property : null,
     year, tag: tag || undefined, favorite: favorite ? 1 : undefined,
   }), [debounced, area, category, property, year, tag, favorite]);
+  const cacheKey = JSON.stringify([searchMode, query]);
 
-  const load = async (offset = 0) => {
+  // Nur übernehmen, wenn die Liste zu genau diesen Such- und Filterangaben gehört.
+  const [restored] = useState(() => (listCache && listCache.key === cacheKey ? listCache : null));
+  const [items, setItems] = useState<DocItem[]>(restored?.items || []);
+  const [total, setTotal] = useState(restored?.total || 0);
+  const [hint, setHint] = useState<string | null>(restored?.hint || null);
+  const [loading, setLoading] = useState(!restored);
+  const [error, setError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const first = useRef(true);
+
+  // Tastatur nur bei leerer Suche öffnen, nicht bei der Rückkehr zu Treffern.
+  useEffect(() => { if (searchMode && !q) inputRef.current?.focus(); }, [searchMode]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { const t = setTimeout(() => setDebounced(q), 250); return () => clearTimeout(t); }, [q]);
+  // Bei der Rückkehr an dieselbe Stelle der Liste springen.
+  useLayoutEffect(() => { if (restored) { const y = takeScroll(); if (y !== null) window.scrollTo(0, y); } }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Suchbegriff und Filter in der Adresse festhalten (ohne neuen Verlaufseintrag), damit „Zurück“ sie wiederfindet.
+  useEffect(() => {
+    const p = new URLSearchParams();
+    if (debounced.trim()) p.set("q", debounced.trim());
+    if (area) p.set("bereich", area);
+    if (category !== null) p.set("kategorie", String(category));
+    if (area === "vermietung" && property !== null) p.set("objekt", String(property));
+    if (year !== null) p.set("jahr", String(year));
+    if (tag) p.set("tag", tag);
+    if (favorite) p.set("favorit", "1");
+    replaceRoute(searchMode ? "/suche" : "/archiv", p);
+  }, [debounced, area, category, property, year, tag, favorite, searchMode]);
+
+  useEffect(() => { listCache = { key: cacheKey, items, total, hint }; }, [cacheKey, items, total, hint]);
+
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    setDebounced(q);
+    inputRef.current?.blur(); // schließt die Bildschirmtastatur
+  };
+
+  const load = async (offset = 0, limit = 60) => {
     setLoading(true);
     try {
-      const res = await get("/api/documents", { ...query, offset, limit: 60 });
+      const res = await get("/api/documents", { ...query, offset, limit });
       setItems((cur) => (offset ? [...cur, ...res.results] : res.results));
       setTotal(res.total);
       setHint(res.hint || null);
@@ -47,8 +82,12 @@ export default function Archive({ params, searchMode = false }: { params: URLSea
       setLoading(false);
     }
   };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { load(0); }, [query]);
+  useEffect(() => {
+    // Wiederhergestellte Liste still in derselben Länge aktualisieren, damit die Scrollposition stimmt.
+    if (first.current && restored) load(0, Math.max(60, restored.items.length));
+    else load(0);
+    first.current = false;
+  }, [query]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const roots = (meta?.categories || []).filter((c) => c.area_key === area && !c.parent_id);
   const children = (meta?.categories || []).filter((c) => category && c.parent_id === category);
@@ -58,11 +97,11 @@ export default function Archive({ params, searchMode = false }: { params: URLSea
 
   return (
     <div className={`page archive ${area || "alle"}`}>
-      <div className="search-bar">
+      <form className="search-bar" role="search" action="" onSubmit={submit}>
         <Icon name="search" size={20} />
         <input ref={inputRef} type="search" placeholder={searchMode ? "Suchen, z. B. Heizungswartung, Grundsteuer 2025 …" : "Im Archiv suchen"}
           value={q} onChange={(e) => setQ(e.target.value)} enterKeyHint="search" aria-label="Suche" />
-      </div>
+      </form>
 
       <nav className="register" aria-label="Bereich">
         {searchMode && <button className={area === "" ? "on" : ""} onClick={() => switchArea("")}>Alle</button>}

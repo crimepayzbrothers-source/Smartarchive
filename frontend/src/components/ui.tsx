@@ -166,9 +166,9 @@ export function CategorySelect({ meta, area, value, onChange, id, allowEmpty = t
   );
 }
 
-export function BackButton({ to }: { to?: string }) {
+export function BackButton({ to, fallback = "/" }: { to?: string; fallback?: string }) {
   return (
-    <button className="icon-btn back" onClick={() => (to ? go(to) : history.length > 1 ? history.back() : go("/"))} aria-label="Zurück">
+    <button className="icon-btn back" onClick={() => (to ? go(to) : history.length > 1 ? history.back() : go(fallback))} aria-label="Zurück">
       <Icon name="back" />
     </button>
   );
