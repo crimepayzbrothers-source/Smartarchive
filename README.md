@@ -65,30 +65,36 @@ SQLite statt PostgreSQL: Für einen Nutzer schneller, ohne eigenen Datenbankserv
 
 5. **Als App installieren:** In Chrome Menü → „Zum Startbildschirm hinzufügen“ bzw. „App installieren“. Danach erscheint SmartArchive auch im Android-Teilen-Menü.
 
-## Backup (Hetzner Storage Box)
+## Backup (restic, z. B. Backblaze B2)
 
 Einmalig auf dem Server:
 
 ```bash
 sudo apt install restic
-echo "ein-langes-zufaelliges-passwort" | sudo tee /root/.restic-pass && sudo chmod 600 /root/.restic-pass
-export RESTIC_REPOSITORY=sftp:u123456@u123456.your-storagebox.de:smartarchive
+openssl rand -base64 32 | sudo tee /root/.restic-pass >/dev/null && sudo chmod 600 /root/.restic-pass
+```
+
+Zugangsdaten in `/root/.restic-env` (chmod 600):
+
+```bash
+export RESTIC_REPOSITORY=b2:<bucket>:smartarchive
 export RESTIC_PASSWORD_FILE=/root/.restic-pass
-restic init
+export B2_ACCOUNT_ID=<keyID>
+export B2_ACCOUNT_KEY=<applicationKey>
+# optional: Mail bei Ausfall über healthchecks.io
+export HEALTHCHECK_URL=https://hc-ping.com/<uuid>
 ```
 
-Das restic-Passwort zusätzlich offline aufbewahren (z. B. Passwortmanager) – ohne es sind die Backups nicht lesbar.
+Dann `. /root/.restic-env && restic init`. Das restic-Passwort zusätzlich offline aufbewahren (z. B. Passwortmanager) – ohne es sind die Backups nicht lesbar.
 
-Cron-Einträge (`sudo crontab -e`):
+Cron-Einträge (`crontab -e` als root):
 
 ```
-RESTIC_REPOSITORY=sftp:u123456@u123456.your-storagebox.de:smartarchive
-RESTIC_PASSWORD_FILE=/root/.restic-pass
-30 3 * * *  cd /pfad/zu/smartarchive && ./scripts/backup.sh >> /var/log/smartarchive-backup.log 2>&1
-0 5 1 * *   cd /pfad/zu/smartarchive && ./scripts/restore-test.sh >> /var/log/smartarchive-backup.log 2>&1
+30 3 * * *  . /root/.restic-env && cd /root/smartarchive && bash scripts/backup.sh >> /var/log/smartarchive-backup.log 2>&1
+0 5 1 * *   . /root/.restic-env && cd /root/smartarchive && bash scripts/restore-test.sh >> /var/log/smartarchive-backup.log 2>&1
 ```
 
-Für SFTP ohne Passworteingabe einen SSH-Schlüssel auf der Storage Box hinterlegen (Hetzner-Doku „Storage Box – SSH-Keys“).
+Mit `HEALTHCHECK_URL` meldet `backup.sh` Start, Erfolg und Fehler (inkl. Log-Auszug); healthchecks.io schickt eine Mail, wenn eine Sicherung fehlschlägt oder ausbleibt. Der monatliche Wiederherstellungstest meldet Fehlschläge an dieselbe Adresse.
 
 ## Import aus Dropbox
 

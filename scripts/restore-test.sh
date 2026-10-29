@@ -3,7 +3,8 @@
 set -euo pipefail
 : "${RESTIC_REPOSITORY:?}" "${RESTIC_PASSWORD_FILE:?}"
 tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
+HC="${HEALTHCHECK_URL:-}"
+trap 'rc=$?; rm -rf "$tmp"; if [ $rc -ne 0 ] && [ -n "$HC" ]; then curl -fsS -m 15 -o /dev/null --data-raw "Wiederherstellungstest fehlgeschlagen" "$HC/fail" || true; fi' EXIT
 restic restore latest --tag smartarchive --target "$tmp"
 db=$(find "$tmp" -name smartarchive.sqlite3 -path "*backup*" | head -1)
 [ -n "$db" ] || { echo "FEHLER: keine Datenbank im Backup"; exit 1; }
