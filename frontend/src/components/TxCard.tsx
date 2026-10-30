@@ -17,6 +17,8 @@ function TxCardInner({ tx, onChanged, meta }: { tx: any; onChanged: () => void; 
   const toast = useToast();
   const s = tx.suggestion || {};
   const auto = tx.status === "auto";
+  const done = tx.status === "done";
+  const applied = auto || done; // schon zugeordnet: Zusammenfassung, Ändern auf Wunsch
   const out = tx.amount_cents < 0;
   const candidates: any[] = tx.candidates || [];
   const properties = meta.properties;
@@ -29,7 +31,7 @@ function TxCardInner({ tx, onChanged, meta }: { tx: any; onChanged: () => void; 
   // Vorschlag „nur Zinsanteil“ (aus dem Verwendungszweck) vorbelegen, sonst der volle Umsatz.
   const [amount, setAmount] = useState(centsToInput(tx.expense_origin === "bank" && tx.expense_amount ? tx.expense_amount
     : s.amount_cents && s.amount_cents <= Math.abs(tx.amount_cents) ? s.amount_cents : Math.abs(tx.amount_cents)));
-  const [editing, setEditing] = useState(!auto);
+  const [editing, setEditing] = useState(!applied);
   const [showText, setShowText] = useState(false);
   const [busy, setBusy] = useState(false);
   const prop = properties.find((p) => p.id === propertyId);
@@ -49,7 +51,7 @@ function TxCardInner({ tx, onChanged, meta }: { tx: any; onChanged: () => void; 
     setBusy(true);
     try {
       await post(`/api/transactions/${tx.id}/decide`, body);
-      toast({ kind: "ok", text: kind === "ignoriert" ? "Ignoriert." : "Zugeordnet." });
+      toast({ kind: "ok", text: kind === "ignoriert" ? "Ignoriert." : done ? "Zuordnung geändert." : "Zugeordnet." });
       onChanged();
     } catch (e: any) {
       toast({ kind: "error", text: e.message });
@@ -65,7 +67,7 @@ function TxCardInner({ tx, onChanged, meta }: { tx: any; onChanged: () => void; 
   const catLabel = meta.expense_categories.find((c) => c.key === (tx.category_key || cat))?.label;
 
   return (
-    <article className={`tx-card ${auto ? "applied" : ""}`}>
+    <article className={`tx-card ${applied ? "applied" : ""} ${done ? "done" : ""}`}>
       <header className="tx-head">
         <div className="tx-main">
           <strong className="tx-party">{tx.counterparty || "Ohne Namen"}</strong>
@@ -81,17 +83,19 @@ function TxCardInner({ tx, onChanged, meta }: { tx: any; onChanged: () => void; 
       )}
       {s.hint && <p className="notice warn small">{s.hint}</p>}
 
-      {auto && !editing ? (
+      {applied && !editing ? (
         <>
           <p className="suggestion-target">
+            {done && <span className="tx-state">{tx.kind === "ignoriert" ? "Ignoriert" : "Bestätigt"}</span>}
             {KIND_LABEL[tx.kind]}{tx.property_name ? ` · ${tx.property_name}` : ""}{tx.kind === "ausgabe" && catLabel ? ` · ${catLabel}` : ""}
+            {tx.kind === "ausgabe" && tx.expense_amount && tx.expense_amount !== Math.abs(tx.amount_cents) ? ` · ${money(tx.expense_amount)} erfasst` : ""}
           </p>
           {tx.document_id && <a className="hint" href={`#/dokument/${tx.document_id}`}>Verknüpfte Rechnung: {tx.document_title || "ansehen"}</a>}
           {tx.expense_status === "entwurf" && <p className="hint">Ausgabe als Entwurf angelegt – „Passt“ bestätigt sie.</p>}
           <div className="row-actions">
-            <button className="primary" disabled={busy} onClick={submit}><Icon name="check" size={18} /> Passt</button>
+            {auto && <button className="primary" disabled={busy} onClick={submit}><Icon name="check" size={18} /> Passt</button>}
             <button className="secondary" disabled={busy} onClick={() => setEditing(true)}>Ändern</button>
-            <button className="ghost" disabled={busy} onClick={undo}><Icon name="undo" size={18} /> Rückgängig</button>
+            <button className="ghost" disabled={busy} onClick={undo}><Icon name="undo" size={18} /> {done ? "Zurück zur Klärung" : "Rückgängig"}</button>
           </div>
         </>
       ) : (
@@ -159,8 +163,8 @@ function TxCardInner({ tx, onChanged, meta }: { tx: any; onChanged: () => void; 
           {kind === "einnahme" && <p className="hint">Einnahmen werden gespeichert; die Auswertung für die Anlage V folgt später.</p>}
 
           <div className="row-actions">
-            <button className="primary" disabled={busy} onClick={submit}><Icon name="check" size={18} /> {kind === "ignoriert" ? "Ignorieren" : "Zuordnen"}</button>
-            {auto && <button className="ghost" onClick={() => setEditing(false)}>Abbrechen</button>}
+            <button className="primary" disabled={busy} onClick={submit}><Icon name="check" size={18} /> {kind === "ignoriert" ? "Ignorieren" : done ? "Änderung speichern" : "Zuordnen"}</button>
+            {applied && <button className="ghost" onClick={() => setEditing(false)}>Abbrechen</button>}
           </div>
         </>
       )}

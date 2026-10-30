@@ -8,6 +8,7 @@ import DocumentPage from "./pages/DocumentPage";
 import Expenses from "./pages/Expenses";
 import Home from "./pages/Home";
 import Inbox from "./pages/Inbox";
+import Transactions from "./pages/Transactions";
 import Login from "./pages/Login";
 import { Properties, PropertyPage } from "./pages/Properties";
 import Settings from "./pages/Settings";
@@ -74,7 +75,7 @@ function Shell({ user, onLogout }: { user: any; onLogout: () => void }) {
   usePoll(true, loadBadge, 20000);
 
   const section = "/" + (path.split("/")[1] || "");
-  const active = (p: string) => (p === "/" ? section === "/" : section === p || (p === "/archiv" && (section === "/dokument" || section === "/suche")) || (p === "/objekte" && section === "/objekt"));
+  const active = (p: string) => (p === "/" ? section === "/" : section === p || (p === "/archiv" && (section === "/dokument" || section === "/suche")) || (p === "/objekte" && section === "/objekt") || (p === "/ausgaben" && section === "/umsaetze"));
   const area = path.startsWith("/archiv") && params.get("bereich") === "vermietung" ? "vermietung" : "auto";
 
   let page;
@@ -86,6 +87,7 @@ function Shell({ user, onLogout }: { user: any; onLogout: () => void }) {
   else if (path === "/suche") page = <Archive key="suche" params={params} searchMode />;
   else if (path === "/objekte") page = <Properties />;
   else if (path === "/ausgaben") page = <Expenses params={params} />;
+  else if (path === "/umsaetze") page = <Transactions params={params} />;
   else if (path === "/einstellungen") page = <Settings user={user} onLogout={onLogout} />;
   else page = <Home key={refresh} onCapture={() => setCapture(true)} />;
 

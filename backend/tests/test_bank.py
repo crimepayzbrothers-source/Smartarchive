@@ -121,7 +121,9 @@ def test_question_then_learning_from_history(client):
 
     _import(client, acc, cb_csv([month(5)]))
     t2 = client.get("/api/transactions/review").json()["open"][0]
-    assert t2["suggestion"].get("property_id") is None  # erst eine Zuordnung -> noch fragen
+    # erst eine Zuordnung: vorgeschlagen wie beim letzten Mal, aber noch nicht automatisch
+    assert (t2["status"], t2["suggestion"]["property_id"], t2["suggestion"]["category_key"]) == ("open", p1, "grundsteuer")
+    assert t2["suggestion"]["confidence"] < 0.9
     client.post(f"/api/transactions/{t2['id']}/decide", json={"kind": "ausgabe", "property_id": p1, "category_key": "grundsteuer"},
                 headers=HEADERS)
 
@@ -229,3 +231,61 @@ def test_resuggest_open_backfills(client):
     finally:
         conn.close()
     assert sugs[-90000]["amount_cents"] == 31240 and sugs[-9900]["category_key"] == "sonstige"
+
+
+def _gs(day, month, year=2026):
+    return (f"{day:02d}.{month:02d}.{year};{day:02d}.{month:02d}.{year};Lastschrift;Verbandsgemeindekasse Nahe-Glan Grundsteuer B "
+            f"Gläubiger-ID: DE98ZZZ09999999999;-123,45;EUR;DE00;")
+
+
+def test_followup_import_knows_period_and_recurring(client):
+    p1 = _prop(client, "Hauptstraße 15", "Hauptstraße 15, 55758 Schmidt-Hachenbach")
+    _prop(client, "Berliner Straße 23", "Berliner Straße 23, 55566 Bad Sobernheim")
+    acc = _account(client)
+    _import(client, acc, cb_csv([_gs(15, 2), _gs(15, 5), _gs(15, 8)]))
+    for t in client.get("/api/transactions/review").json()["open"]:
+        client.post(f"/api/transactions/{t['id']}/decide", json={"kind": "ausgabe", "property_id": p1, "category_key": "grundsteuer"},
+                    headers=HEADERS)
+    a = client.get("/api/bank/accounts").json()[0]["range"]
+    assert (a["last"], a["next_from"], a["count"]) == ("2026-08-15", "2026-08-16", 3)
+
+    # Folgeexport mit Überschneidung: Altes wird erkannt, die wiederkehrende Rate automatisch zugeordnet
+    res = _import(client, acc, cb_csv([_gs(15, 8), _gs(15, 11),
+                                       "20.08.2026;20.08.2026;Lastschrift;Nachgebucht Hausmeister Weber;-80,00;EUR;DE00;"]))
+    assert (res["duplicates"], res["new"], res["auto"], res["known_until"], res["new_in_known"], res["gap"]) == \
+        (1, 2, 1, "2026-08-15", 0, None)
+    auto = client.get("/api/transactions/review").json()["auto"]
+    assert len(auto) == 1 and auto[0]["booking_date"] == "2026-11-15" and auto[0]["category_key"] == "grundsteuer"
+
+    # Lücke: Datei beginnt erst deutlich nach dem letzten erfassten Tag
+    res = _import(client, acc, cb_csv(["10.02.2027;10.02.2027;Lastschrift;Stadtwerke Abschlag;-30,00;EUR;DE00;"]))
+    assert res["gap"] == {"from": "2026-11-16", "to": "2027-02-10"}
+
+    # „Alle bestätigen“ übernimmt die automatische Zuordnung unverändert
+    assert client.post("/api/transactions/confirm-auto", json={}, headers=HEADERS).json() == {"confirmed": 1}
+    done = client.get("/api/transactions", params={"status": "done", "q": "grundsteuer"}).json()
+    assert len(done) == 4 and all(t["expense_status"] == "bestaetigt" and t["category_key"] == "grundsteuer" for t in done)
+
+
+def test_confirmed_transaction_can_be_revised(client):
+    p1 = _prop(client, "Hauptstraße 15", "Hauptstraße 15, 55758 Schmidt-Hachenbach")
+    p2 = _prop(client, "Berliner Straße 23", "Berliner Straße 23, 55566 Bad Sobernheim")
+    acc = _account(client)
+    _import(client, acc, cb_csv(["21.10.2026;21.10.2026;Lastschrift;Baumarkt Mueller Einkauf;-49,90;EUR;DE00;"]))
+    t = client.get("/api/transactions/review").json()["open"][0]
+    client.post(f"/api/transactions/{t['id']}/decide", json={"kind": "ausgabe", "property_id": p1, "category_key": "sonstige"},
+                headers=HEADERS)
+    # Abfrage nach Jahr, Objekt und Art
+    found = client.get("/api/transactions", params={"year": 2026, "property_id": p1, "kind": "ausgabe"}).json()
+    assert [x["id"] for x in found] == [t["id"]]
+
+    # falsch bestätigt: anderes Objekt, andere Kategorie, Teilbetrag – dieselbe Ausgabe wird angepasst
+    t2 = client.post(f"/api/transactions/{t['id']}/decide", json={"kind": "ausgabe", "property_id": p2, "category_key": "erhaltung_sofort",
+                     "amount_cents": 2990}, headers=HEADERS).json()
+    assert (t2["property_id"], t2["category_key"], t2["expense_amount"], t2["expense_id"]) == (p2, "erhaltung_sofort", 2990, found[0]["expense_id"])
+    assert len(client.get("/api/expenses", params={"year": 2026}).json()) == 1
+
+    # ganz zurücknehmen: Ausgabe weg, Umsatz wieder offen
+    t3 = client.post(f"/api/transactions/{t['id']}/undo", headers=HEADERS).json()
+    assert t3["status"] == "open" and t3["expense_id"] is None
+    assert client.get("/api/expenses", params={"year": 2026}).json() == []

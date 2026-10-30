@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { get, post } from "../api";
 import { useLoad, usePoll, useToast } from "../lib";
 import { SuggestionBox } from "../components/Suggestion";
@@ -12,6 +13,7 @@ export default function Inbox({ onCapture }: { onCapture: () => void }) {
   const data: any = both?.[0];
   const txs: any = both?.[1] || { open: [], auto: [] };
   const toast = useToast();
+  const [confirming, setConfirming] = useState(false);
   const processing = data?.pending.filter((d: any) => d.status === "processing") || [];
   usePoll(processing.length > 0, reload);
   if (loading && !both) return <Loading />;
@@ -23,6 +25,18 @@ export default function Inbox({ onCapture }: { onCapture: () => void }) {
   const undated = data.undated || [];
   const dups = data.duplicates || [];
 
+  const confirmAll = async () => {
+    setConfirming(true);
+    try {
+      const r = await post("/api/transactions/confirm-auto", { ids: txs.auto.map((t: any) => t.id) });
+      toast({ kind: "ok", text: `${r.confirmed} Umsätze bestätigt.` });
+      reload();
+    } catch (e: any) {
+      toast({ kind: "error", text: e.message });
+    } finally {
+      setConfirming(false);
+    }
+  };
   const retry = async (id: number) => {
     await post(`/api/documents/${id}/run/process`);
     toast({ kind: "ok", text: "Wird erneut verarbeitet." });
@@ -124,7 +138,13 @@ export default function Inbox({ onCapture }: { onCapture: () => void }) {
       {txs.auto.length > 0 && (
         <section className="group">
           <h2 className="group-title">Umsätze automatisch zugeordnet <span className="count">{txs.auto.length}</span></h2>
-          <p className="hint">„Passt“ bestätigt, „Rückgängig“ stellt den Umsatz zurück zur Klärung.</p>
+          <p className="hint">Wiederkehrende Umsätze, zugeordnet wie in den Vormonaten. „Passt“ bestätigt, „Ändern“ korrigiert,
+            „Rückgängig“ stellt den Umsatz zurück zur Klärung. Später jederzeit änderbar unter Ausgaben → Mietkonto.</p>
+          {txs.auto.length > 1 && (
+            <button className="secondary" disabled={confirming} onClick={confirmAll}>
+              <Icon name="check" size={18} /> Alle {txs.auto.length} so bestätigen
+            </button>
+          )}
           <div className="tx-list">{txs.auto.map((t: any) => <TxCard key={t.id} tx={t} onChanged={reload} />)}</div>
         </section>
       )}

@@ -508,3 +508,18 @@ dialog.scanner::backdrop { background: #0b1013; }
 .suggestion.duplicate { border-color: color-mix(in srgb, var(--danger) 35%, transparent); background: color-mix(in srgb, var(--danger-soft) 55%, var(--surface)); }
 .dup-existing { display: flex; flex-direction: column; gap: .15rem; padding: .55rem .7rem; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--ink); }
 .document > .suggestion.duplicate { margin: 0 0 1rem; }
+
+/* Kontoumsätze: Liste und Korrektur */
+.tx-card.done { border-left-color: var(--line); }
+.tx-state { display: inline-block; margin-right: .45rem; padding: .05rem .5rem; border-radius: 99px; background: var(--surface-2); font-size: .78rem; font-weight: 600; color: var(--ink-2); }
+.tx-rows { display: flex; flex-direction: column; gap: .4rem; }
+.tx-row { display: flex; justify-content: space-between; align-items: center; gap: .75rem; width: 100%; text-align: left; padding: .7rem .85rem; background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--line); border-radius: var(--radius); color: var(--ink); min-height: 0; }
+.tx-row.open { border-left-color: var(--ochre); }
+.tx-row.auto { border-left-color: var(--vermietung); }
+.tx-row-main { display: flex; flex-direction: column; min-width: 0; gap: .1rem; }
+.tx-row-main strong { overflow-wrap: anywhere; font-weight: 600; }
+.tx-row-main .muted { font-size: .84rem; }
+.tx-open { display: flex; flex-direction: column; gap: .3rem; }
+.tx-open > .link { align-self: flex-end; }
+.transactions .segmented { margin: 0; }
+.bank-actions { display: flex; flex-wrap: wrap; gap: .5rem; }

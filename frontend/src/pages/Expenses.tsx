@@ -205,14 +205,23 @@ function BankPanel() {
           <p className="muted">
             {acc?.name}: {acc?.range?.count ? `${acc.range.count} Umsätze vom ${date(acc.range.first)} bis ${date(acc.range.last)}` : "noch keine Umsätze"}
           </p>
+          {acc?.range?.next_from && (
+            <p className="hint">Erfasst bis {date(acc.range.last)}. Nächsten Export am besten <strong>ab {date(acc.range.next_from)}</strong> wählen –
+              Überschneidungen sind kein Problem, doppelte Umsätze werden erkannt.</p>
+          )}
           <input ref={fileRef} type="file" accept=".csv,text/csv,text/plain" hidden onChange={(e) => { upload(e.target.files?.[0]); e.target.value = ""; }} />
-          <button className="primary block" disabled={busy} onClick={() => fileRef.current?.click()}>
-            <Icon name="down" size={18} /> {busy ? "Wird eingelesen …" : "Umsätze einlesen (CSV)"}
-          </button>
+          <div className="bank-actions">
+            <button className="primary" disabled={busy} onClick={() => fileRef.current?.click()}>
+              <Icon name="down" size={18} /> {busy ? "Wird eingelesen …" : "Umsätze einlesen (CSV)"}
+            </button>
+            {acc?.range?.count > 0 && <button className="secondary" onClick={() => go("/umsaetze")}>Alle Umsätze ansehen und korrigieren</button>}
+          </div>
           {result && (
             <div className="notice">
               <span>{result.new} neue Umsätze ({date(result.from)} – {date(result.to)}){result.duplicates ? `, ${result.duplicates} schon vorhanden` : ""}.
-                {" "}{result.auto} automatisch zugeordnet, {result.open} zum Klären.</span>
+                {" "}{result.auto} automatisch zugeordnet, {result.open} zum Klären.
+                {result.new_in_known > 0 && ` ${result.new_in_known} davon liegen im bereits erfassten Zeitraum (bis ${date(result.known_until)}) – vermutlich nachträglich gebucht, bitte kurz prüfen.`}
+                {result.gap && ` Achtung: Zwischen ${date(result.gap.from)} und ${date(result.gap.to)} enthält keine Datei Umsätze. Falls es dort Buchungen gab, diesen Zeitraum zusätzlich exportieren.`}</span>
               {(result.auto + result.open) > 0 && <button className="secondary small" onClick={() => go("/eingang")}>Zum Eingang</button>}
             </div>
           )}

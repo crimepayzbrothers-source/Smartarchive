@@ -289,12 +289,16 @@ def _history(conn: sqlite3.Connection, tx: dict[str, Any]) -> dict[str, Any] | N
         return None
     total = sum(h["n"] for h in hist)
     top = hist[0]
-    if top["n"] < 2 or top["n"] / total < 0.8:
-        return None
-    return {"kind": top["kind"], "property_id": top["property_id"], "unit_id": top["unit_id"],
-            "category_key": top["category_key"], "source": "history",
-            "confidence": 0.95 if top["n"] >= 3 else 0.92, "partial": bool(top["partial"]),
-            "reason": f"{top['n']} frühere Umsätze dieses Zahlungspartners wurden so zugeordnet."}
+    base = {"kind": top["kind"], "property_id": top["property_id"], "unit_id": top["unit_id"],
+            "category_key": top["category_key"], "source": "history", "partial": bool(top["partial"])}
+    if top["n"] >= 2 and top["n"] / total >= 0.8:
+        # Wiederkehrend und eindeutig: wird automatisch zugeordnet (zur Kontrolle im Eingang).
+        return {**base, "confidence": 0.95 if top["n"] >= 3 else 0.92,
+                "reason": f"{top['n']} frühere Umsätze dieses Zahlungspartners wurden so zugeordnet."}
+    # Erst ein Treffer oder kein klares Muster: nur vorschlagen, Sie bestätigen.
+    return {**base, "confidence": 0.7,
+            "reason": "Wie beim letzten Umsatz dieses Zahlungspartners vorgeschlagen." if total == 1 else
+            f"Meist so zugeordnet ({top['n']} von {total} früheren Umsätzen) – bitte prüfen."}
 
 
 def _ai(conn: sqlite3.Connection, tx: dict[str, Any], props: list[dict]) -> dict[str, Any] | None:
@@ -488,13 +492,23 @@ def resuggest_open(conn: sqlite3.Connection) -> int:
     return n
 
 
+def coverage(conn: sqlite3.Connection, account_id: int) -> dict[str, Any]:
+    """Bereits erfasster Zeitraum eines Kontos und der empfohlene Beginn des nächsten Exports."""
+    r = row(conn.execute("SELECT MIN(booking_date) AS first, MAX(booking_date) AS last, COUNT(*) AS count "
+                         "FROM transactions WHERE account_id = ?", (account_id,)))
+    nxt = date.fromordinal(date.fromisoformat(r["last"]).toordinal() + 1).isoformat() if r["last"] else None
+    return {**r, "next_from": nxt}
+
+
 def import_csv(conn: sqlite3.Connection, account_id: int, filename: str, data: bytes) -> dict[str, Any]:
     parsed = parse_csv(data)
+    before = coverage(conn, account_id)
     ts = now()
     import_id = conn.execute("INSERT INTO bank_imports(account_id, filename, rows_total, created_at) VALUES(?,?,?,?)",
                              (account_id, filename[:200], len(parsed), ts)).lastrowid
     seen: dict[str, int] = {}
     new_ids: list[int] = []
+    in_known = 0  # neue Umsätze in einem Zeitraum, der schon eingelesen war (z. B. nachträglich gebucht)
     for r in parsed:
         base = f"{account_id}|{r['booking_date']}|{r['amount_cents']}|{r['counterparty']}|{r['purpose']}"
         seen[base] = seen.get(base, 0) + 1
@@ -506,6 +520,8 @@ def import_csv(conn: sqlite3.Connection, account_id: int, filename: str, data: b
         tid = conn.execute(f"INSERT INTO transactions({', '.join(cols)}) VALUES({', '.join('?' * len(cols))})",
                            (account_id, import_id, fp, *r.values(), key, ts, ts)).lastrowid
         new_ids.append(tid)
+        if before["last"] and r["booking_date"] <= before["last"]:
+            in_known += 1
     conn.execute("UPDATE bank_imports SET rows_new = ? WHERE id = ?", (len(new_ids), import_id))
     counts = {"auto": 0, "open": 0}
     for i, tid in enumerate(sorted(new_ids, key=lambda t: t)):  # älteste zuerst, damit der Verlauf wächst
@@ -513,8 +529,29 @@ def import_csv(conn: sqlite3.Connection, account_id: int, filename: str, data: b
     audit(conn, "imported", "bank_import", import_id, {"datei": filename, "neu": len(new_ids), "gesamt": len(parsed)})
     first = min((r["booking_date"] for r in parsed), default=None)
     last = max((r["booking_date"] for r in parsed), default=None)
+    # Lücke: Die Datei beginnt erst nach dem Tag, der auf den bisher letzten Umsatz folgt.
+    gap = bool(before["next_from"] and first and first > before["next_from"])
     return {"import_id": import_id, "total": len(parsed), "new": len(new_ids), "duplicates": len(parsed) - len(new_ids),
-            "auto": counts["auto"], "open": counts["open"], "from": first, "to": last}
+            "auto": counts["auto"], "open": counts["open"], "from": first, "to": last,
+            "known_until": before["last"], "new_in_known": in_known,
+            "gap": {"from": before["next_from"], "to": first} if gap else None}
+
+
+def confirm_auto(conn: sqlite3.Connection, ids: list[int] | None = None) -> int:
+    """Bestätigt automatisch zugeordnete Umsätze so, wie sie zugeordnet wurden („Passt“ für alle)."""
+    q = "SELECT t.*, e.amount_cents AS e_amount, e.origin AS e_origin FROM transactions t " \
+        "LEFT JOIN expenses e ON e.id = t.expense_id WHERE t.status = 'auto'"
+    items = rows(conn.execute(q))
+    if ids is not None:
+        items = [t for t in items if t["id"] in set(ids)]
+    for t in items:
+        data: dict[str, Any] = {"kind": t["kind"], "property_id": t["property_id"], "unit_id": t["unit_id"]}
+        if t["kind"] == "ausgabe" and t["expense_id"] and t["e_origin"] != "bank":
+            data["expense_id"] = t["expense_id"]
+        elif t["kind"] == "ausgabe":
+            data.update({"category_key": t["category_key"], "amount_cents": t["e_amount"] or -t["amount_cents"]})
+        decide(conn, t["id"], data)
+    return len(items)
 
 
 def decide(conn: sqlite3.Connection, tx_id: int, data: dict[str, Any]) -> dict[str, Any]:

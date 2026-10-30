@@ -25,7 +25,7 @@ TX_SELECT = (
 def decorate(conn, items: list[dict[str, Any]], with_candidates: bool = False) -> list[dict[str, Any]]:
     for t in items:
         t["suggestion"] = json.loads(t["suggestion"] or "{}")
-        if with_candidates and t["status"] != "done" and t["amount_cents"] < 0:
+        if with_candidates and t["status"] != "done" and t["amount_cents"] < 0:  # nur für Offenes/Automatisches
             t["candidates"] = [{k: c[k] for k in ("id", "payee", "amount_cents", "invoice_date", "category_key", "property_id",
                                                   "property_name", "document_id", "document_title", "score", "why", "status")}
                                for c in banking.expense_candidates(conn, t)[:5]]
@@ -51,8 +51,7 @@ async def list_accounts(request: Request, conn, user):
     for a in accs:
         a["last_import"] = row(conn.execute("SELECT filename, rows_total, rows_new, created_at FROM bank_imports "
                                             "WHERE account_id = ? ORDER BY id DESC LIMIT 1", (a["id"],)))
-        a["range"] = row(conn.execute("SELECT MIN(booking_date) AS first, MAX(booking_date) AS last, COUNT(*) AS count "
-                                      "FROM transactions WHERE account_id = ?", (a["id"],)))
+        a["range"] = banking.coverage(conn, a["id"])
     return accs
 
 
@@ -101,9 +100,18 @@ async def import_csv(request: Request, conn, user):
 async def list_transactions(request: Request, conn, user):
     qp = request.query_params
     where, params = ["1=1"], []
-    if qp.get("status"):
+    if qp.get("status") in ("open", "auto", "done"):
         where.append("t.status = ?")
         params.append(qp["status"])
+    if qp.get("kind") in ("ausgabe", "einnahme", "ignoriert"):
+        where.append("t.kind = ? AND t.status != 'open'")
+        params.append(qp["kind"])
+    if int_param(request, "property_id"):
+        where.append("t.property_id = ?")
+        params.append(int_param(request, "property_id"))
+    if qp.get("q"):
+        where.append("(t.counterparty LIKE ? OR t.purpose LIKE ?)")
+        params += [f"%{qp['q'].strip()}%"] * 2
     year = int_param(request, "year")
     if year:
         where.append("substr(t.booking_date, 1, 4) = ?")
@@ -114,7 +122,7 @@ async def list_transactions(request: Request, conn, user):
     limit = min(int_param(request, "limit") or 200, 1000)
     items = rows(conn.execute(TX_SELECT + " WHERE " + " AND ".join(where) + " ORDER BY t.booking_date DESC, t.id DESC LIMIT ?",
                               [*params, limit]))
-    return decorate(conn, items, with_candidates=qp.get("status") in ("open", "auto"))
+    return decorate(conn, items, with_candidates=True)
 
 
 @endpoint()
@@ -151,6 +159,21 @@ async def decide(request: Request, conn, user):
     return _one(conn, tx_id)
 
 
+class ConfirmIn(BaseModel):
+    ids: list[int] | None = None
+
+
+@endpoint()
+async def confirm_auto(request: Request, conn, user):
+    data = await body(request, ConfirmIn)
+    try:
+        with tx(conn):
+            n = banking.confirm_auto(conn, data.ids)
+    except banking.BankImportError as exc:
+        raise ApiError(400, str(exc)) from None
+    return {"confirmed": n}
+
+
 @endpoint()
 async def undo(request: Request, conn, user):
     tx_id = path_int(request)
@@ -166,6 +189,7 @@ routes = [
     Route("/api/bank/import", import_csv, methods=["POST"]),
     Route("/api/transactions", list_transactions, methods=["GET"]),
     Route("/api/transactions/review", review, methods=["GET"]),
+    Route("/api/transactions/confirm-auto", confirm_auto, methods=["POST"]),
     Route("/api/transactions/{id:int}/decide", decide, methods=["POST"]),
     Route("/api/transactions/{id:int}/undo", undo, methods=["POST"]),
 ]
