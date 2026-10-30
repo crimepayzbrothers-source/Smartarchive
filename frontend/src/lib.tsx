@@ -123,6 +123,16 @@ const ToastCtx = createContext<(t: Omit<Toast, "id">) => void>(() => {});
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
+  // Meldungen müssen auch über geöffneten Dialogen (oberste Ebene) sichtbar sein: als Popover jeweils neu nach oben holen.
+  const layerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = layerRef.current as any;
+    if (!el || typeof el.showPopover !== "function") return;
+    try {
+      if (el.matches(":popover-open")) el.hidePopover();
+      if (toasts.length) el.showPopover();
+    } catch { /* ältere Browser: normale Ebene */ }
+  }, [toasts]);
   const push = useCallback((t: Omit<Toast, "id">) => {
     const id = Date.now() + Math.random();
     setToasts((ts) => [...ts, { ...t, id }]);
@@ -131,7 +141,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastCtx.Provider value={push}>
       {children}
-      <div className="toasts" role="status" aria-live="polite">
+      <div className="toasts" role="status" aria-live="polite" ref={layerRef} {...({ popover: "manual" } as any)}>
         {toasts.map((t) => (
           <div key={t.id} className={`toast ${t.kind}`}>
             <span>{t.text}</span>

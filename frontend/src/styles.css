@@ -647,3 +647,10 @@ details.collapsible[open] > summary { margin-bottom: .8rem; }
 .import-notice p { margin: .25rem 0 0; font-size: .88rem; }
 .small-files li { font-size: .85rem; }
 .occupancy .panel-head { flex-wrap: wrap; }
+/* Meldungen als Popover in der obersten Ebene: Browser-Standardstile des Popovers zurücksetzen */
+.toasts[popover] { margin: 0; padding: 0; border: 0; background: transparent; overflow: visible; inset: auto; left: 50%; bottom: calc(var(--nav-h) + 1rem + env(safe-area-inset-bottom)); color: inherit; }
+.toasts[popover]:not(:popover-open) { display: none; }
+.form-error { position: sticky; bottom: .5rem; z-index: 2; font-weight: 560; }
+select.invalid, input.invalid { border-color: var(--danger); box-shadow: 0 0 0 3px var(--danger-soft); }
+.form label.check { flex-direction: row; align-items: flex-start; gap: .55rem; font-weight: 500; color: var(--ink); }
+.form label.check input { margin-top: .2rem; flex: none; width: auto; }

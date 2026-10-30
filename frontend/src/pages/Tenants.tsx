@@ -66,9 +66,20 @@ export function TenancyForm({ meta, initial, onSaved, onCancel, notice }: { meta
   const setParty = (i: number, k: keyof Party, v: string) => setParties(parties.map((p, j) => (j === i ? { ...p, [k]: v } : p)));
   const setTerm = (i: number, k: keyof Term, v: string) => setTerms(terms.map((t, j) => (j === i ? { ...t, [k]: v } : t)));
 
+  const [err, setErr] = useState<string | null>(null);
+  const errRef = useRef<HTMLParagraphElement>(null);
+  const fail = (text: string) => {
+    setErr(text);
+    window.setTimeout(() => errRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }), 30);
+  };
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!propertyId) return toast({ kind: "error", text: "Bitte ein Mietobjekt wählen." });
+    setErr(null);
+    if (!propertyId) return fail("Bitte ein Mietobjekt wählen.");
+    if (prop && prop.units.length > 0 && !unitId) return fail("Bitte die Wohnung wählen (oben unter „Mietsache“).");
+    if (!f.contract_start) return fail("Bitte den Mietbeginn angeben.");
+    if (!parties.some((p) => p.last_name.trim())) return fail("Bitte bei mindestens einem Vertragspartner den Nachnamen angeben.");
+    if (terms.some((t, i) => i > 0 && !t.valid_from)) return fail("Bei jeder Änderung der Miete bitte „Gültig ab“ angeben.");
     const body = {
       property_id: propertyId, unit_id: unitId, contract_start: f.contract_start, move_in: f.move_in || null,
       contract_end: f.contract_end || null, move_out: f.move_out || null, umlage_notes: f.umlage_notes, notes: f.notes,
@@ -81,31 +92,36 @@ export function TenancyForm({ meta, initial, onSaved, onCancel, notice }: { meta
       const saved = editing ? await put(`/api/tenancies/${initial.id}`, body) : await post("/api/tenancies", body);
       toast({ kind: "ok", text: "Mietverhältnis gespeichert." });
       onSaved(saved);
-    } catch (err: any) {
-      toast({ kind: "error", text: err.message });
+    } catch (ex: any) {
+      fail(ex.message);
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <form className="form tenancy-form" onSubmit={submit}>
+    <form className="form tenancy-form" onSubmit={submit} noValidate>
       {notice}
       <fieldset className="form-block">
         <legend>Mietsache</legend>
         <div className="form grid">
           <label>Objekt
-            <select value={propertyId ?? ""} onChange={(e) => { setPropertyId(Number(e.target.value)); setUnitId(null); }} disabled={editing}>
+            <select value={propertyId ?? ""} onChange={(e) => { setPropertyId(Number(e.target.value)); setUnitId(null); setErr(null); }}>
               {meta.properties.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           </label>
           {prop && prop.units.length > 0 && (
             <label>Wohnung / Einheit
-              <select value={unitId ?? ""} onChange={(e) => setUnitId(e.target.value ? Number(e.target.value) : null)} required disabled={editing}>
+              <select value={unitId ?? ""} onChange={(e) => { setUnitId(e.target.value ? Number(e.target.value) : null); setErr(null); }}
+                className={err && !unitId ? "invalid" : ""}>
                 <option value="">– wählen –</option>
                 {prop.units.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
               </select>
             </label>
+          )}
+          {prop && prop.units.length === 0 && (
+            <p className="hint span2">Dieses Objekt hat keine Wohnungen angelegt – das Mietverhältnis gilt dann für das ganze Objekt.
+              Wohnungen legen Sie auf der <a href={`#/objekt/${prop.id}`}>Objektseite</a> unter „Einheiten“ an.</p>
           )}
         </div>
       </fieldset>
@@ -173,6 +189,7 @@ export function TenancyForm({ meta, initial, onSaved, onCancel, notice }: { meta
         <label>Notizen<textarea rows={2} value={f.notes} onChange={set("notes")} /></label>
       </fieldset>
 
+      {err && <p ref={errRef} className="notice error form-error" role="alert"><Icon name="alert" size={18} /> {err}</p>}
       <div className="row-actions">
         <button className="primary" disabled={busy}><Icon name="check" size={18} /> {editing ? "Speichern" : "Mietverhältnis anlegen"}</button>
         {onCancel && <button type="button" className="ghost" onClick={onCancel}>Abbrechen</button>}
