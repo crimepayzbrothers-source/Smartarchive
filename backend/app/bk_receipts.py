@@ -114,56 +114,103 @@ def _relevant(doc: dict[str, Any], start: str, end: str) -> tuple[bool, str]:
     return False, ""
 
 
+_DOC_SQL = (
+    "SELECT d.id, d.title, d.doc_type, d.doc_date, d.created_at, c.name AS correspondent, t.content, "
+    "(SELECT COUNT(*) FROM expenses e WHERE e.document_id = d.id) AS expenses "
+    "FROM documents d JOIN areas a ON a.id = d.area_id LEFT JOIN correspondents c ON c.id = d.correspondent_id "
+    "LEFT JOIN document_text t ON t.document_id = d.id "
+    "WHERE a.key = 'vermietung' AND d.property_id = ? AND d.status = 'filed' AND d.deleted_at IS NULL AND d.tenancy_id IS NULL "
+    "AND COALESCE(d.doc_type, '') != 'Betriebskostenabrechnung' ")
+
+
+def _proposal(conn: sqlite3.Connection, doc: dict[str, Any], strict: bool = True) -> dict[str, Any] | None:
+    """Positionsvorschlag für einen Beleg. strict=False (Suche): auch Belege mit erfasster Ausgabe oder ohne erkannte Kostenart."""
+    text = doc["content"] or ""
+    is_bescheid = (doc["doc_type"] == "Bescheid") or bool(BESCHEID.search(f"{doc['title']} {text[:600]}"))
+    if is_bescheid:
+        parsed = parse_bescheid(text)
+        if not parsed["positions"]:
+            if strict and not re.search("|".join(pat for _, pat in TYPE_PATTERNS), text, re.I):
+                return None
+            parsed["positions"] = [{"cost_type": cost_type_of(text) or "sonstige", "amount_cents": None, "line": None, "note": "",
+                                    "evidence": "Kein Betrag zeilenweise erkannt – bitte aus dem Beleg eintragen.", "confidence": "pruefen"}]
+        return {"kind": "bescheid", **parsed}
+    if strict and doc["expenses"]:
+        return None  # Rechnung ist als Ausgabe erfasst → „Aus Ausgaben übernehmen“
+    prop = invoices._proposal(conn, {**doc, "content": text}) or {}
+    amount = prop.get("amount_cents")
+    if not amount and doc["expenses"]:
+        e = row(conn.execute("SELECT amount_cents FROM expenses WHERE document_id = ? ORDER BY id LIMIT 1", (doc["id"],)))
+        amount = e and e["amount_cents"]
+    ct, reason = bk.suggest_type(prop.get("category_key"), f"{doc['correspondent'] or ''} {doc['title']} {text[:2000]}")
+    if strict and ct == "nicht_umlagefaehig" and not amount:
+        return None  # weder Betrag noch Betriebskostenart erkennbar
+    return {"kind": "rechnung", "positions": [{"cost_type": ct, "amount_cents": amount, "line": None, "note": reason,
+                                              "evidence": prop.get("amount_evidence") or "Betrag nicht erkannt – bitte aus dem Beleg eintragen.",
+                                              "confidence": "pruefen"}],
+            "sum": amount or 0, "total": None, "total_matches": False}
+
+
+def _linked(conn: sqlite3.Connection, period_id: int) -> set[int]:
+    return {r[0] for r in conn.execute("SELECT document_id FROM bk_costs WHERE period_id = ? AND document_id IS NOT NULL", (period_id,))}
+
+
+def _entry(doc: dict[str, Any], why: str, parsed: dict[str, Any]) -> dict[str, Any]:
+    return {"document_id": doc["id"], "title": doc["title"], "doc_date": doc["doc_date"], "correspondent": doc["correspondent"],
+            "why": why, **parsed}
+
+
 def scan(conn: sqlite3.Connection, period_id: int) -> list[dict[str, Any]]:
     """Belege des Objekts für den Zeitraum, die noch nicht in der Abrechnung sind, mit Positionsvorschlägen."""
     p = bk.load_period(conn, period_id)
-    linked = {r[0] for r in conn.execute("SELECT document_id FROM bk_costs WHERE period_id = ? AND document_id IS NOT NULL", (period_id,))}
-    docs = rows(conn.execute(
-        "SELECT d.id, d.title, d.doc_type, d.doc_date, d.created_at, c.name AS correspondent, t.content, "
-        "(SELECT COUNT(*) FROM expenses e WHERE e.document_id = d.id) AS expenses "
-        "FROM documents d JOIN areas a ON a.id = d.area_id LEFT JOIN correspondents c ON c.id = d.correspondent_id "
-        "LEFT JOIN document_text t ON t.document_id = d.id "
-        "WHERE a.key = 'vermietung' AND d.property_id = ? AND d.status = 'filed' AND d.deleted_at IS NULL AND d.tenancy_id IS NULL AND COALESCE(d.doc_type, '') != 'Betriebskostenabrechnung' "
-        "ORDER BY COALESCE(d.doc_date, d.created_at)", (p["property_id"],)))
+    linked = _linked(conn, period_id)
+    docs = rows(conn.execute(_DOC_SQL + "ORDER BY COALESCE(d.doc_date, d.created_at)", (p["property_id"],)))
     out = []
     for doc in docs:
         if doc["id"] in linked:
             continue
-        text = doc["content"] or ""
-        is_bescheid = (doc["doc_type"] == "Bescheid") or bool(BESCHEID.search(f"{doc['title']} {text[:600]}"))
         ok, why = _relevant(doc, p["start"], p["end"])
         if not ok:
             continue
-        if is_bescheid:
-            parsed = parse_bescheid(text)
-            if not parsed["positions"]:
-                if not re.search("|".join(pat for _, pat in TYPE_PATTERNS), text, re.I):
-                    continue
-                parsed["positions"] = [{"cost_type": cost_type_of(text) or "sonstige", "amount_cents": None, "line": None, "note": "",
-                                        "evidence": "Kein Betrag zeilenweise erkannt – bitte aus dem Beleg eintragen.", "confidence": "pruefen"}]
-            kind = "bescheid"
-        else:
-            if doc["expenses"]:
-                continue  # Rechnung ist als Ausgabe erfasst → „Aus Ausgaben übernehmen“
-            prop = invoices._proposal(conn, {**doc, "content": text}) or {}
-            ct, reason = bk.suggest_type(prop.get("category_key"), f"{doc['correspondent'] or ''} {doc['title']} {text[:2000]}")
-            if ct == "nicht_umlagefaehig" and not prop.get("amount_cents"):
-                continue  # weder Betrag noch Betriebskostenart erkennbar
-            parsed = {"positions": [{"cost_type": ct, "amount_cents": prop.get("amount_cents"), "line": None, "note": reason,
-                                     "evidence": prop.get("amount_evidence") or "Betrag nicht erkannt – bitte aus dem Beleg eintragen.",
-                                     "confidence": "pruefen"}], "sum": prop.get("amount_cents") or 0, "total": None, "total_matches": False}
-            kind = "rechnung"
-        out.append({"document_id": doc["id"], "title": doc["title"], "doc_date": doc["doc_date"], "correspondent": doc["correspondent"],
-                    "kind": kind, "why": why, **parsed})
+        parsed = _proposal(conn, doc)
+        if parsed:
+            out.append(_entry(doc, why, parsed))
     return out
+
+
+def search_period(conn: sqlite3.Connection, period_id: int, query: str) -> dict[str, Any]:
+    """Volltextsuche in den Belegen des Objekts – fest eingegrenzt auf den Abrechnungszeitraum (Belegdatum)."""
+    from . import search
+    p = bk.load_period(conn, period_id)
+    res = search.search(conn, query, area="vermietung", property_id=p["property_id"], date_from=p["start"], date_to=p["end"], limit=50)
+    linked = _linked(conn, period_id)
+    out = []
+    for r in res["results"]:
+        doc = row(conn.execute(_DOC_SQL + "AND d.id = ?", (p["property_id"], r["id"])))
+        if not doc:
+            continue
+        snippet = "".join(x["t"] for x in r["snippet"]).strip()
+        entry = _entry(doc, f"Treffer: {snippet}" if snippet else "Treffer im Titel", _proposal(conn, doc, strict=False))
+        entry["linked"] = doc["id"] in linked
+        entry["snippet"] = r["snippet"]
+        out.append(entry)
+    return {"results": out, "total": res["total"], "hint": res["hint"], "from": p["start"], "to": p["end"]}
 
 
 def import_positions(conn: sqlite3.Connection, period_id: int, items: list[dict[str, Any]]) -> int:
     """Ausgewählte Positionen übernehmen – jede mit Verknüpfung zum Originalbeleg und Fundstelle, zunächst ungeprüft."""
     available = {d["document_id"]: d for d in scan(conn, period_id)}
+    p = bk.load_period(conn, period_id)
+    linked = _linked(conn, period_id)
     n = 0
     for it in items:
         doc = available.get(it.get("document_id"))
+        if not doc and it.get("document_id") not in linked:
+            # aus der Volltextsuche: Beleg des Objekts im Abrechnungszeitraum
+            d = row(conn.execute(_DOC_SQL + "AND d.id = ? AND COALESCE(d.doc_date, substr(d.created_at, 1, 10)) BETWEEN ? AND ?",
+                                 (p["property_id"], it.get("document_id"), p["start"], p["end"])))
+            if d:
+                doc = {"document_id": d["id"], "title": d["title"], "doc_date": d["doc_date"], "correspondent": d["correspondent"]}
         if not doc:
             raise bk.BKError("Der Beleg ist nicht mehr verfügbar oder schon übernommen. Bitte die Belegprüfung neu laden.")
         amount = it.get("amount_cents")

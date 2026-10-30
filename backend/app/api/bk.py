@@ -267,6 +267,16 @@ async def receipt_scan(request: Request, conn, user):
     return await run_in_threadpool(bk_receipts.scan, conn, period_id)
 
 
+@endpoint()
+async def receipt_search(request: Request, conn, user):
+    period_id = path_int(request)
+    _period_or_404(conn, period_id)
+    q = (request.query_params.get("q") or "").strip()
+    if not q:
+        raise ApiError(400, "Bitte einen Suchbegriff eingeben.")
+    return await run_in_threadpool(bk_receipts.search_period, conn, period_id, q)
+
+
 class ReceiptImportIn(BaseModel):
     items: list[dict] = Field(default_factory=list, max_length=200)
 
@@ -550,6 +560,7 @@ routes = [
     Route("/api/bk/periods/{id:int}/costs/import", import_costs, methods=["POST"]),
     Route("/api/bk/periods/{id:int}/receipt-scan", receipt_scan, methods=["GET"]),
     Route("/api/bk/periods/{id:int}/receipt-scan/import", receipt_import, methods=["POST"]),
+    Route("/api/bk/periods/{id:int}/receipt-search", receipt_search, methods=["GET"]),
     Route("/api/bk/costs/{id:int}", patch_cost, methods=["PATCH"]),
     Route("/api/bk/costs/{id:int}", delete_cost, methods=["DELETE"]),
     Route("/api/bk/periods/{id:int}/values", set_value, methods=["PUT"]),

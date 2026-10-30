@@ -78,3 +78,32 @@ def test_scan_import_link_and_verify(client):
     assert out["receipts"]["unverified"] == 1
     out = client.patch(f"/api/bk/costs/{gs['id']}", json={"amount_cents": 24321}, headers=HEADERS).json()
     assert out["receipts"]["unverified"] == 0
+
+
+def test_search_limited_to_billing_period(client):
+    pid, units, t, period = _setup(client)
+
+    def up(name, lines):
+        return client.post("/api/upload", data={"area": "vermietung", "property_id": str(pid)},
+                           files=[("files", (name, make_pdf(lines), "application/pdf"))], headers=HEADERS).json()["created"][0]
+    d26 = up("s26.pdf", ["Bezirksschornsteinfeger Klein", "Rechnungsdatum: 12.03.2026", "Kehrarbeiten Feuerstaettenschau",
+                         "Rechnungsbetrag 96,40 EUR"])
+    up("s25.pdf", ["Bezirksschornsteinfeger Klein", "Rechnungsdatum: 11.03.2025", "Kehrarbeiten", "Rechnungsbetrag 91,00 EUR"])
+    run_worker()
+    r = client.get(f"/api/bk/periods/{period}/receipt-search", params={"q": "Schornsteinfeger"}).json()
+    assert [x["document_id"] for x in r["results"]] == [d26] and (r["from"], r["to"]) == ("2026-01-01", "2026-12-31")
+    hit = r["results"][0]
+    assert hit["linked"] is False and hit["positions"][0]["cost_type"] == "schornstein" and hit["positions"][0]["amount_cents"] == 9640
+    assert client.get(f"/api/bk/periods/{period}/receipt-search", params={"q": ""}).status_code == 400
+
+    # Treffer übernehmen (auch wenn als Ausgabe erfasst), danach als „bereits übernommen“ markiert
+    out = client.post(f"/api/bk/periods/{period}/receipt-scan/import",
+                      json={"items": [{"document_id": d26, "cost_type": "schornstein", "amount_cents": 9640, "evidence": hit["why"]}]},
+                      headers=HEADERS).json()
+    assert out["imported"] == 1
+    assert client.get(f"/api/bk/periods/{period}/receipt-search", params={"q": "Schornsteinfeger"}).json()["results"][0]["linked"] is True
+    # Beleg außerhalb des Zeitraums lässt sich nicht unterschieben
+    other = [d["id"] for d in client.get("/api/documents", params={"q": "Schornsteinfeger"}).json()["results"] if d["id"] != d26][0]
+    bad = client.post(f"/api/bk/periods/{period}/receipt-scan/import",
+                      json={"items": [{"document_id": other, "cost_type": "schornstein", "amount_cents": 9100}]}, headers=HEADERS)
+    assert bad.status_code == 400

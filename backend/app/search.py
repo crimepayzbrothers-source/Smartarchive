@@ -24,6 +24,7 @@ def short_terms(query: str) -> list[str]:
 
 def search(conn: sqlite3.Connection, query: str, *, area: str | None = None, category_id: int | None = None,
            property_id: int | None = None, year: int | None = None, tag: str | None = None,
+           date_from: str | None = None, date_to: str | None = None,
            limit: int = 50, offset: int = 0) -> dict[str, Any]:
     match = build_match(query)
     where = ["d.deleted_at IS NULL", "d.status != 'processing'"]
@@ -40,6 +41,9 @@ def search(conn: sqlite3.Connection, query: str, *, area: str | None = None, cat
     if year:
         where.append("substr(COALESCE(d.doc_date, d.created_at), 1, 4) = ?")
         params.append(str(year))
+    if date_from and date_to:
+        where.append("COALESCE(d.doc_date, substr(d.created_at, 1, 10)) BETWEEN ? AND ?")
+        params += [date_from, date_to]
     if tag:
         where.append("d.id IN (SELECT dt.document_id FROM document_tags dt JOIN tags t ON t.id = dt.tag_id WHERE t.name = ?)")
         params.append(tag)

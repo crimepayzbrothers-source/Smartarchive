@@ -1,7 +1,7 @@
 // Betriebskostenabrechnung: Übersicht je Objekt/Jahr und Schritt-für-Schritt-Assistent.
 import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { centsToInput, date, del, get, money, parseMoney, patch, post, put } from "../api";
-import { go, useLoad, useMeta, useToast } from "../lib";
+import { go, replaceRoute, takeScroll, useLoad, useMeta, useToast } from "../lib";
 import { BackButton, Empty, ErrorBox, Icon, Loading } from "../components/ui";
 import { ConfirmDelete, SwipeRow } from "../components/SwipeRow";
 
@@ -165,13 +165,35 @@ function LandlordPanel({ onSaved }: { onSaved?: () => void }) {
 
 // --- Assistent -------------------------------------------------------------------
 
+/** Zustand des Assistenten in der Adresse halten (Schritt, Belegprüfung, Suchbegriff) – „Zurück“ aus einem Beleg landet genau hier. */
+function setUrlParams(patch: Record<string, string | null>) {
+  const raw = window.location.hash.replace(/^#/, "");
+  const [path, query = ""] = raw.split("?");
+  const qs = new URLSearchParams(query);
+  for (const [k, v] of Object.entries(patch)) (v === null || v === "" ? qs.delete(k) : qs.set(k, v));
+  replaceRoute(path, qs);
+}
+const urlParam = (k: string) => new URLSearchParams(window.location.hash.split("?")[1] || "").get(k);
+
+// Scrollposition beim Zurückkehren aus einem Beleg wiederherstellen, sobald der Inhalt hoch genug ist
+let pendingScroll: number | null = null;
+function restoreScroll() {
+  if (pendingScroll === null) return;
+  const y = pendingScroll;
+  requestAnimationFrame(() => {
+    if (document.documentElement.scrollHeight - window.innerHeight >= y - 4) { window.scrollTo(0, y); pendingScroll = null; }
+  });
+}
+
 export function BkWizard({ id, params }: { id: number; params: URLSearchParams }) {
   const bkMeta = useBkMeta();
   const { data, error, loading, reload } = useLoad(() => get(`/api/bk/periods/${id}`), [id]);
   const [step, setStepState] = useState<string>(params.get("schritt") || "kosten");
   const [d, setD] = useState<any>(null);
+  useEffect(() => { pendingScroll = takeScroll(); }, [id]);
   useEffect(() => { if (data) setD(data); }, [data]);
-  const setStep = (s: string) => { setStepState(s); history.replaceState(null, "", `#/betriebskosten/${id}?schritt=${s}`); window.scrollTo(0, 0); };
+  useEffect(() => { if (d) restoreScroll(); }, [d]);
+  const setStep = (s: string) => { setStepState(s); setUrlParams({ schritt: s, belege: null, suche: null }); window.scrollTo(0, 0); };
   if (loading && !d) return <Loading />;
   if (error) return <div className="page"><BackButton fallback="/betriebskosten" /><ErrorBox text={error} /></div>;
   if (!d || !bkMeta) return <Loading />;
@@ -249,22 +271,37 @@ function useAction(onChange: (d: any) => void) {
 }
 
 // Belegprüfung: Archivbelege des Objekts per Volltext auswerten (Abgabenbescheide zeilenweise zerlegen)
-function ReceiptScan({ periodId, meta, onClose, onImported }: { periodId: number; meta: BkMeta; onClose: () => void; onImported: (r: any) => void }) {
+function ReceiptScan({ periodId, period, meta, onClose, onImported }: { periodId: number; period: any; meta: BkMeta; onClose: () => void; onImported: (r: any) => void }) {
   const toast = useToast();
+  const SEL_KEY = `sa-bk-sel-${periodId}`;
   const { data, error } = useLoad(() => get<any[]>(`/api/bk/periods/${periodId}/receipt-scan`), [periodId]);
-  const [sel, setSel] = useState<Record<string, any>>({});
+  const [q, setQ] = useState(urlParam("suche") || "");
+  const [hits, setHits] = useState<any>(null);
+  const [sel, setSel] = useState<Record<string, any>>(() => { try { return JSON.parse(sessionStorage.getItem(SEL_KEY) || "{}"); } catch { return {}; } });
   const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    if (!data) return;
-    const init: Record<string, any> = {};
-    data.forEach((doc) => doc.positions.forEach((p: any, i: number) => {
-      init[`${doc.document_id}:${i}`] = { on: p.amount_cents != null, cost_type: p.cost_type, amount: p.amount_cents != null ? centsToInput(p.amount_cents) : "" };
+  const docs: any[] = [...(data || []), ...((hits?.results || []).filter((h: any) => !h.linked && !(data || []).some((x) => x.document_id === h.document_id)))];
+  useEffect(() => {  // Vorbelegung für neue Belege, gemerkte Auswahl bleibt
+    if (!docs.length) return;
+    const next = { ...sel };
+    let changed = false;
+    docs.forEach((doc) => doc.positions.forEach((p: any, i: number) => {
+      const k = `${doc.document_id}:${i}`;
+      if (!next[k]) { next[k] = { on: !!data?.some((x) => x.document_id === doc.document_id) && p.amount_cents != null, cost_type: p.cost_type,
+        amount: p.amount_cents != null ? centsToInput(p.amount_cents) : "" }; changed = true; }
     }));
-    setSel(init);
-  }, [data]);
+    if (changed) setSel(next);
+  }, [data, hits]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { try { sessionStorage.setItem(SEL_KEY, JSON.stringify(sel)); } catch { /* privat */ } }, [sel, SEL_KEY]);
+  useEffect(() => { if (data) restoreScroll(); }, [data, hits]);
+  const runSearch = async (term: string) => {
+    setUrlParams({ suche: term || null });
+    if (!term.trim()) return setHits(null);
+    try { setHits(await get(`/api/bk/periods/${periodId}/receipt-search`, { q: term })); }
+    catch (e: any) { toast({ kind: "error", text: e.message }); }
+  };
+  useEffect(() => { if (q) runSearch(q); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const upd = (k: string, patchv: any) => setSel({ ...sel, [k]: { ...sel[k], ...patchv } });
-  const chosen = data ? data.flatMap((doc) => doc.positions.map((p: any, i: number) => ({ doc, p, k: `${doc.document_id}:${i}` })))
-    .filter((x) => sel[x.k]?.on) : [];
+  const chosen = docs.flatMap((doc) => doc.positions.map((p: any, i: number) => ({ doc, p, k: `${doc.document_id}:${i}` }))).filter((x) => sel[x.k]?.on);
   const doImport = async () => {
     const items = chosen.map(({ doc, p, k }) => ({ document_id: doc.document_id, cost_type: sel[k].cost_type, amount_cents: parseMoney(sel[k].amount),
       evidence: p.evidence }));
@@ -272,50 +309,70 @@ function ReceiptScan({ periodId, meta, onClose, onImported }: { periodId: number
     setBusy(true);
     try {
       const r = await post(`/api/bk/periods/${periodId}/receipt-scan/import`, { items });
+      try { sessionStorage.removeItem(SEL_KEY); } catch { /* privat */ }
       toast({ kind: "ok", text: `${r.imported} Position${r.imported === 1 ? "" : "en"} übernommen – bitte mit dem Beleg abgleichen.` });
       onImported(r);
     } catch (e: any) { toast({ kind: "error", text: e.message }); }
     finally { setBusy(false); }
   };
+  const year = period.start.slice(0, 4) === period.end.slice(0, 4) ? period.start.slice(0, 4) : `${date(period.start)} – ${date(period.end)}`;
+  const card = (doc: any, hit = false) => (
+    <div key={`${hit ? "h" : "s"}${doc.document_id}`} className="scan-doc">
+      <div className="scan-doc-head">
+        <span><strong>{doc.correspondent || doc.title}</strong><span className="muted sub-line">{doc.title}{doc.doc_date ? ` · ${date(doc.doc_date)}` : ""} · {doc.why}</span></span>
+        <a className="secondary small btn-link" href={`#/dokument/${doc.document_id}`}>Beleg öffnen</a>
+      </div>
+      {doc.linked ? <p className="small-num pos">Bereits in der Abrechnung übernommen.</p> : <>
+        {doc.kind === "bescheid" && doc.total != null && (
+          <p className={`small-num ${doc.total_matches ? "pos" : "warn-text"}`}>{doc.total_matches
+            ? `Summe der Positionen = Gesamtbetrag laut Bescheid (${money(doc.total)})`
+            : `Summe der Positionen ${money(doc.sum)} weicht vom erkannten Gesamtbetrag ${money(doc.total)} ab – bitte prüfen`}</p>
+        )}
+        <ul className="plain-list">
+          {doc.positions.map((p: any, i: number) => {
+            const k = `${doc.document_id}:${i}`;
+            const v = sel[k] || {};
+            return (
+              <li key={k} className={`scan-pos ${v.on ? "" : "off"}`}>
+                <label className="check"><input type="checkbox" checked={!!v.on} onChange={(e) => upd(k, { on: e.target.checked })} aria-label="übernehmen" />
+                  <span className="bk-evidence">„{p.evidence}“{p.note && <span className="muted sub-line">{p.note}</span>}</span></label>
+                <select value={v.cost_type || p.cost_type} onChange={(e) => upd(k, { cost_type: e.target.value })} aria-label="Kostenart">
+                  {meta.cost_types.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
+                </select>
+                <input className="amount" inputMode="decimal" value={v.amount ?? ""} onChange={(e) => upd(k, { amount: e.target.value })} placeholder="Betrag" aria-label="Betrag" />
+                {p.confidence === "hoch" ? <span className="status-pill bestaetigt">passt zur Summe</span> : <span className="status-pill entwurf">prüfen</span>}
+              </li>
+            );
+          })}
+        </ul>
+      </>}
+    </div>
+  );
   return (
     <div className="import-box receipt-scan">
       <h3>Belegprüfung im Archiv</h3>
-      <p className="hint">Belege dieses Objekts aus dem Bereich Vermietung, die zum Zeitraum gehören und noch nicht übernommen sind. Abgabenbescheide
-        werden per Volltext Zeile für Zeile in Kostenarten zerlegt; jede Position zeigt die Zeile, aus der sie stammt. Rechnungen, die schon als Ausgabe
-        erfasst sind, übernehmen Sie über „Aus Ausgaben übernehmen“.</p>
-      {error && <ErrorBox text={error} />}
-      {!data ? <Loading /> : data.length === 0 ? <p className="muted">Keine weiteren passenden Belege gefunden.</p> : data.map((doc) => (
-        <div key={doc.document_id} className="scan-doc">
-          <div className="scan-doc-head">
-            <span><strong>{doc.correspondent || doc.title}</strong><span className="muted sub-line">{doc.title}{doc.doc_date ? ` · ${date(doc.doc_date)}` : ""} · {doc.why}</span></span>
-            <a className="secondary small btn-link" href={`#/dokument/${doc.document_id}`} target="_blank" rel="noopener">Beleg öffnen</a>
-          </div>
-          {doc.kind === "bescheid" && doc.total != null && (
-            <p className={`small-num ${doc.total_matches ? "pos" : "warn-text"}`}>{doc.total_matches
-              ? `Summe der Positionen = Gesamtbetrag laut Bescheid (${money(doc.total)})`
-              : `Summe der Positionen ${money(doc.sum)} weicht vom erkannten Gesamtbetrag ${money(doc.total)} ab – bitte prüfen`}</p>
-          )}
-          <ul className="plain-list">
-            {doc.positions.map((p: any, i: number) => {
-              const k = `${doc.document_id}:${i}`;
-              const v = sel[k] || {};
-              return (
-                <li key={k} className={`scan-pos ${v.on ? "" : "off"}`}>
-                  <label className="check"><input type="checkbox" checked={!!v.on} onChange={(e) => upd(k, { on: e.target.checked })} aria-label="übernehmen" />
-                    <span className="bk-evidence">„{p.evidence}“{p.note && <span className="muted sub-line">{p.note}</span>}</span></label>
-                  <select value={v.cost_type || p.cost_type} onChange={(e) => upd(k, { cost_type: e.target.value })} aria-label="Kostenart">
-                    {meta.cost_types.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
-                  </select>
-                  <input className="amount" inputMode="decimal" value={v.amount ?? ""} onChange={(e) => upd(k, { amount: e.target.value })} placeholder="Betrag" aria-label="Betrag" />
-                  {p.confidence === "hoch" ? <span className="status-pill bestaetigt">passt zur Summe</span> : <span className="status-pill entwurf">prüfen</span>}
-                </li>
-              );
-            })}
-          </ul>
+      <form className="bk-search" onSubmit={(e) => { e.preventDefault(); (document.activeElement as HTMLElement)?.blur(); runSearch(q); }}>
+        <label>Volltextsuche in den Belegen {year}<span className="search-row">
+          <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="z. B. Schornsteinfeger, Abwasser, Versicherung" enterKeyHint="search" />
+          <button className="secondary">Suchen</button></span></label>
+        <p className="hint">Gesucht wird nur in Belegen dieses Objekts aus dem Bereich Vermietung mit Belegdatum im Abrechnungszeitraum
+          ({date(period.start)} – {date(period.end)}).</p>
+      </form>
+      {hits && (
+        <div className="bk-hits">
+          <h4>{hits.results.length ? `${hits.results.length} Treffer für „${q}“` : `Keine Treffer für „${q}“ im Zeitraum`}</h4>
+          {hits.hint && <p className="hint">{hits.hint}</p>}
+          {hits.results.map((h: any) => card(h, true))}
         </div>
-      ))}
+      )}
+      <h4>Gefundene Belege zum Zeitraum</h4>
+      <p className="hint">Belege, die zum Zeitraum gehören und noch nicht übernommen sind. Abgabenbescheide werden Zeile für Zeile in Kostenarten zerlegt;
+        jede Position zeigt die Zeile, aus der sie stammt. Rechnungen, die schon als Ausgabe erfasst sind, übernehmen Sie über „Aus Ausgaben übernehmen“
+        oder über die Suche.</p>
+      {error && <ErrorBox text={error} />}
+      {!data ? <Loading /> : data.length === 0 ? <p className="muted">Keine weiteren passenden Belege gefunden.</p> : data.map((doc) => card(doc))}
       <div className="row-actions">
-        {data && data.length > 0 && <button className="primary" disabled={busy || !chosen.length} onClick={doImport}>{chosen.length} Position{chosen.length === 1 ? "" : "en"} übernehmen</button>}
+        {chosen.length > 0 && <button className="primary" disabled={busy} onClick={doImport}>{chosen.length} Position{chosen.length === 1 ? "" : "en"} übernehmen</button>}
         <button className="ghost" onClick={onClose}>Schließen</button>
       </div>
     </div>
@@ -328,7 +385,8 @@ function CostsStep({ d, meta, onChange }: { d: any; meta: BkMeta; onChange: (d: 
   const [importing, setImporting] = useState<any[] | null>(null);
   const [choice, setChoice] = useState<Record<number, string>>({});
   const [doomed, setDoomed] = useState<any>(null);
-  const [scanning, setScanning] = useState(false);
+  const [scanning, setScanningState] = useState(urlParam("belege") === "1");
+  const setScanning = (on: boolean) => { setScanningState(on); setUrlParams({ belege: on ? "1" : null, suche: on ? urlParam("suche") : null }); };
   const [form, setForm] = useState({ cost_type: "grundsteuer", description: "", amount: "", invoice_date: "", unit_id: "" });
   const types = meta.cost_types;
   const label = (k: string) => types.find((t) => t.key === k)?.label || k;
@@ -363,7 +421,7 @@ function CostsStep({ d, meta, onChange }: { d: any; meta: BkMeta; onChange: (d: 
         <p className="notice warn block">{d.receipts.unverified} automatisch erfasste Position{d.receipts.unverified === 1 ? "" : "en"} noch ungeprüft:
           Beleg öffnen, Betrag und Kostenart vergleichen, dann „geprüft“ antippen.</p>
       )}
-      {scanning && <ReceiptScan periodId={d.period.id} meta={meta} onClose={() => setScanning(false)} onImported={(r) => { onChange(r); setScanning(false); }} />}
+      {scanning && <ReceiptScan periodId={d.period.id} period={d.period} meta={meta} onClose={() => setScanning(false)} onImported={(r) => { onChange(r); setScanning(false); }} />}
       <p className="hint">Erfassen Sie die Gesamtkosten des Hauses für den Zeitraum. Bezahlte Ausgaben des Objekts (Abflussprinzip) können Sie direkt übernehmen;
         Verwaltung, Instandhaltung und Zinsen werden dabei als „nicht umlagefähig“ eingeordnet.</p>
 
