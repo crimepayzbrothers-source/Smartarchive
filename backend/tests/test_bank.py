@@ -176,3 +176,56 @@ def test_partial_history_is_never_auto(client):
         assert len(t) == 1, f"Monat {m} sollte nachfragen"
         client.post(f"/api/transactions/{t[0]['id']}/decide", json={"kind": "ausgabe", "property_id": p1, "category_key": "schuldzinsen",
                                                                    "amount_cents": 30000 - m}, headers=HEADERS)
+
+
+def test_interest_share_from_purpose():
+    from app.banking import interest_share
+    assert interest_share("Darlehen 12345 Zinsen 312,40 Tilgung 587,60", -90000) == {
+        "interest_cents": 31240, "redemption_cents": 58760, "adds_up": True}
+    assert interest_share("DARL 4711 SOLLZINSEN: EUR 1.312,40", -200000)["interest_cents"] == 131240
+    # nichts raten: Zinssatz, Sammelbegriffe, Datum, mehrere Beträge, Betrag über der Rate, Gutschrift
+    for text, amount in [("Zinssatz 3,50 % Rate 900,00", -90000), ("Zins- und Tilgungsrate 900,00", -90000),
+                         ("Zinsen bis 30.09.2026 312,40", -90000), ("Zinsen 312,40 Zinsen 100,00", -90000),
+                         ("Zinsen 950,00", -90000), ("Habenzinsen 1,20", 120)]:
+        assert interest_share(text, amount) is None, text
+
+
+def test_loan_interest_suggested_and_default_category(client):
+    p1 = _prop(client, "Hauptstraße 15", "Hauptstraße 15, 55758 Schmidt-Hachenbach")
+    acc = _account(client)
+    res = _import(client, acc, cb_csv([
+        "30.10.2026;30.10.2026;Lastschrift;Commerzbank AG Darlehen 12345 Rate 10/2026 Zinsen 312,40 Tilgung 587,60;-900,00;EUR;DE00;",
+        "21.10.2026;21.10.2026;Lastschrift;Unbekannt GmbH Sonstwas;-99,00;EUR;DE00;",
+    ]))
+    assert (res["auto"], res["open"]) == (0, 2)  # beides wartet auf Ihre Bestätigung
+    items = {t["amount_cents"]: t for t in client.get("/api/transactions/review").json()["open"]}
+    loan, other = items[-90000]["suggestion"], items[-9900]["suggestion"]
+    assert (loan["source"], loan["category_key"], loan["amount_cents"], loan["partial"]) == ("zweck", "schuldzinsen", 31240, True)
+    assert loan["property_id"] == p1 and "Tilgung" in loan["reason"]
+    assert (other["kind"], other["category_key"], other["confidence"]) == ("ausgabe", "sonstige", 0.3)
+
+    t = client.post(f"/api/transactions/{items[-90000]['id']}/decide", json={"kind": "ausgabe", "property_id": p1,
+                    "category_key": "schuldzinsen", "amount_cents": 31240}, headers=HEADERS).json()
+    assert t["status"] == "done" and t["expense_amount"] == 31240 and t["expense_status"] == "bestaetigt"
+
+
+def test_resuggest_open_backfills(client):
+    import json
+    from app import banking
+    from app.db import connect, tx
+    _prop(client, "Hauptstraße 15", "Hauptstraße 15, 55758 Schmidt-Hachenbach")
+    acc = _account(client)
+    _import(client, acc, cb_csv([
+        "30.10.2026;30.10.2026;Lastschrift;Commerzbank AG Darlehen Zinsen 312,40;-900,00;EUR;DE00;",
+        "21.10.2026;21.10.2026;Lastschrift;Unbekannt GmbH Sonstwas;-99,00;EUR;DE00;",
+    ]))
+    conn = connect()
+    try:
+        with tx(conn):  # Stand vor diesem Update nachstellen: kein Zinsanteil, keine Kategorie
+            conn.execute("UPDATE transactions SET suggestion = ?", (json.dumps({"kind": "ausgabe", "category_key": None}),))
+        with tx(conn):
+            assert banking.resuggest_open(conn) == 2
+        sugs = {r[0]: json.loads(r[1]) for r in conn.execute("SELECT amount_cents, suggestion FROM transactions")}
+    finally:
+        conn.close()
+    assert sugs[-90000]["amount_cents"] == 31240 and sugs[-9900]["category_key"] == "sonstige"

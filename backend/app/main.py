@@ -34,6 +34,7 @@ def init_db() -> None:
         _fix_dates(conn)
         _assume_paid(conn)
         _assess_dates(conn)
+        _bank_resuggest(conn)
     finally:
         conn.close()
 
@@ -186,3 +187,18 @@ def _assess_dates(conn) -> None:
         logging.getLogger("smartarchive").info("Unsichere Belegdaten markiert: %s", n)
     except Exception:  # noqa: BLE001
         logging.getLogger("smartarchive").exception("Datumsprüfung fehlgeschlagen")
+
+
+def _bank_resuggest(conn) -> None:
+    """Einmalig: offene Kontoumsätze um Zinsanteil und Standardkategorie ergänzen."""
+    from . import banking
+    from .db import get_setting, set_setting, tx
+    if get_setting(conn, "bank_suggest_v2"):
+        return
+    try:
+        with tx(conn):
+            n = banking.resuggest_open(conn)
+            set_setting(conn, "bank_suggest_v2", True)
+        logging.getLogger("smartarchive").info("Offene Kontoumsätze neu vorgeschlagen: %s", n)
+    except Exception:  # noqa: BLE001
+        logging.getLogger("smartarchive").exception("Neuvorschlag für Kontoumsätze fehlgeschlagen")

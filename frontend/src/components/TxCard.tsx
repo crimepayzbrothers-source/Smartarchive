@@ -5,7 +5,7 @@ import { useMeta, useToast, type Meta } from "../lib";
 import { Icon, sourceLabel } from "./ui";
 
 const KIND_LABEL: Record<string, string> = { ausgabe: "Ausgabe", einnahme: "Einnahme", ignoriert: "Ignorieren" };
-const SOURCE: Record<string, string> = { beleg: "Rechnung gefunden", history: "Bisherige Zuordnung", ai: "KI", keyword: "Stichwörter", user: "Von Ihnen" };
+const SOURCE: Record<string, string> = { beleg: "Rechnung gefunden", history: "Bisherige Zuordnung", zweck: "Verwendungszweck", ai: "KI", keyword: "Stichwörter", user: "Von Ihnen" };
 
 export function TxCard(props: { tx: any; onChanged: () => void }) {
   const { meta } = useMeta();
@@ -26,7 +26,9 @@ function TxCardInner({ tx, onChanged, meta }: { tx: any; onChanged: () => void; 
   const [propertyId, setPropertyId] = useState<number | null>(tx.property_id ?? s.property_id ?? null);
   const [unitId, setUnitId] = useState<number | null>(tx.unit_id ?? s.unit_id ?? null);
   const [cat, setCat] = useState<string>(tx.category_key ?? s.category_key ?? "");
-  const [amount, setAmount] = useState(centsToInput(tx.expense_origin === "bank" && tx.expense_amount ? tx.expense_amount : Math.abs(tx.amount_cents)));
+  // Vorschlag „nur Zinsanteil“ (aus dem Verwendungszweck) vorbelegen, sonst der volle Umsatz.
+  const [amount, setAmount] = useState(centsToInput(tx.expense_origin === "bank" && tx.expense_amount ? tx.expense_amount
+    : s.amount_cents && s.amount_cents <= Math.abs(tx.amount_cents) ? s.amount_cents : Math.abs(tx.amount_cents)));
   const [editing, setEditing] = useState(!auto);
   const [showText, setShowText] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -149,7 +151,7 @@ function TxCardInner({ tx, onChanged, meta }: { tx: any; onChanged: () => void; 
                     </select>
                   </label>
                   <label>Betrag (€)<input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} />
-                    <span className="hint">anpassbar, z. B. nur Zinsanteil</span></label>
+                    <span className="hint">{s.partial && parseMoney(amount) === s.amount_cents ? `Zinsanteil von ${money(Math.abs(tx.amount_cents))}` : "anpassbar, z. B. nur Zinsanteil"}</span></label>
                 </>
               )}
             </div>

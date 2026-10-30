@@ -204,6 +204,37 @@ def _hint(text: str, amount: int) -> str:
     return ""
 
 
+# Zins- bzw. Tilgungsanteil, wenn die Bank ihn im Verwendungszweck ausweist, z. B.
+# „Zinsen 312,40 Tilgung 587,60“, „Sollzinsen: EUR 312,40“, „Zinsanteil 312,40 EUR“.
+# Bewusst eng: zwischen Wort und Betrag nur Doppelpunkt, Klammern, „EUR“/„€“. „Zinssatz 3,50 %“,
+# „Zins- und Tilgungsrate 900,00“ oder Daten („30.09.2026“) werden so nie als Zinsbetrag gelesen.
+_AMOUNT = r"(\d{1,3}(?:\.\d{3})+,\d{2}|\d+,\d{2}|\d+\.\d{2})(?![.,]?\d)(?!\s*%)"
+_GAP = r"[\s:=()]*(?:EUR|€)?[\s:=()]*"
+_INTEREST = re.compile(r"(?<![a-zäöü])(?:soll|darlehens|kredit|haben)?zins(?:en|anteil|betrag|belastung)?\b(?!-)" + _GAP + _AMOUNT, re.I)
+_REDEMPTION = re.compile(r"(?<![a-zäöü])tilgung(?:santeil|sbetrag)?\b(?!-)" + _GAP + _AMOUNT, re.I)
+
+
+def _labelled_amounts(pattern: re.Pattern, text: str) -> set[int]:
+    return {c for c in (parse_amount(m.group(1)) for m in pattern.finditer(text)) if c and c > 0}
+
+
+def interest_share(text: str, amount_cents: int) -> dict[str, Any] | None:
+    """Liest den ausgewiesenen Zinsanteil einer Abbuchung. Kein Raten: nur bei genau einem eindeutigen Betrag."""
+    if amount_cents >= 0 or re.search(r"habenzins", text, re.I):
+        return None
+    found = _labelled_amounts(_INTEREST, text)
+    if len(found) != 1:
+        return None
+    interest = found.pop()
+    total = -amount_cents
+    if interest > total:
+        return None
+    redemption = _labelled_amounts(_REDEMPTION, text)
+    adds_up = len(redemption) == 1 and interest + next(iter(redemption)) == total
+    return {"interest_cents": interest, "redemption_cents": next(iter(redemption)) if len(redemption) == 1 else None,
+            "adds_up": adds_up}
+
+
 def _keyword_category(text: str) -> str | None:
     low = text.lower()
     for key, words in BANK_KEYWORDS:
@@ -290,6 +321,7 @@ def analyze(conn: sqlite3.Connection, tx: dict[str, Any], use_ai: bool = True) -
     props = rows(conn.execute("SELECT id, name, address, keywords FROM properties WHERE archived = 0 ORDER BY id"))
     text = f"{tx['counterparty']} {tx['purpose']}"
     sug: dict[str, Any] = {"hint": _hint(text, tx["amount_cents"])}
+    interest = interest_share(tx["purpose"] or "", tx["amount_cents"])
 
     cands = expense_candidates(conn, tx)
     if cands:
@@ -308,9 +340,11 @@ def analyze(conn: sqlite3.Connection, tx: dict[str, Any], use_ai: bool = True) -
         sug.update(hist)
         return sug
 
-    ai = _ai(conn, tx, props) if use_ai else None
+    ai = _ai(conn, tx, props) if use_ai and not interest else None
     if ai:
         sug.update(ai)
+        if sug.get("kind") == "ausgabe" and not sug.get("category_key"):
+            sug["category_key"] = DEFAULT_CATEGORY
     else:
         if tx["amount_cents"] > 0:
             sug.update({"kind": "einnahme", "source": "keyword",
@@ -318,15 +352,34 @@ def analyze(conn: sqlite3.Connection, tx: dict[str, Any], use_ai: bool = True) -
                         "reason": "Zahlungseingang" + (" mit „Miete“ im Text." if _RENT.search(text) else ".")})
         else:
             cat = _keyword_category(text)
-            sug.update({"kind": "ausgabe", "category_key": cat, "source": "keyword", "confidence": 0.6 if cat else 0.3,
-                        "reason": "Kategorie nach Stichwörtern vorgeschlagen." if cat else "Keine passende Rechnung gefunden."})
+            sug.update({"kind": "ausgabe", "category_key": cat or DEFAULT_CATEGORY, "source": "keyword",
+                        "confidence": 0.6 if cat else 0.3,
+                        "reason": "Kategorie nach Stichwörtern vorgeschlagen." if cat else
+                        "Keine passende Rechnung und keine bestimmte Kategorie erkannt – vorgeschlagen: Sonstige Werbungskosten."})
     if not sug.get("property_id"):
         pid, _ = extract.detect_property(text, props)
         if pid:
             sug["property_id"] = pid
         elif len(props) == 1:
             sug["property_id"] = props[0]["id"]
+    if interest:
+        _apply_interest(sug, interest)
     return sug
+
+
+def money_text(cents: int) -> str:
+    return f"{cents / 100:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") + " €"
+
+
+def _apply_interest(sug: dict[str, Any], interest: dict[str, Any]) -> None:
+    """Zinsanteil laut Verwendungszweck als Vorschlag. Teilbeträge bestätigen Sie immer selbst."""
+    reason = f"Zinsanteil {money_text(interest['interest_cents'])} ausgewiesen"
+    if interest["adds_up"]:
+        reason += f"; Zinsen und Tilgung ({money_text(interest['redemption_cents'])}) ergeben genau den Umsatz"
+    sug.update({"kind": "ausgabe", "category_key": "schuldzinsen", "amount_cents": interest["interest_cents"],
+                "partial": True, "source": "zweck", "confidence": 0.85 if interest["adds_up"] else 0.75,
+                "reason": reason + ".",
+                "hint": "Nur der Zinsanteil wird als Ausgabe vorgeschlagen, die Tilgung nicht. Bitte prüfen und bestätigen."})
 
 
 # --- Anwenden ------------------------------------------------------------------
@@ -414,6 +467,25 @@ def refresh_suggestion(conn: sqlite3.Connection, tx_id: int) -> None:
 
 
 MAX_AI_PER_IMPORT = 40
+DEFAULT_CATEGORY = "sonstige"  # „Sonstige Werbungskosten“, wenn keine bestimmte Kategorie erkennbar ist
+
+
+def resuggest_open(conn: sqlite3.Connection) -> int:
+    """Einmalig für Bestand: offene Abbuchungen mit ausgewiesenem Zinsanteil neu vorschlagen,
+    Ausgaben ohne Kategorie auf „Sonstige Werbungskosten“ setzen. KI-Vorschläge bleiben unangetastet."""
+    n = 0
+    for t in rows(conn.execute("SELECT * FROM transactions WHERE status = 'open' AND amount_cents < 0")):
+        sug = json.loads(t["suggestion"] or "{}")
+        if interest_share(t["purpose"] or "", t["amount_cents"]):
+            refresh_suggestion(conn, t["id"])
+        elif sug.get("kind") == "ausgabe" and not sug.get("category_key"):
+            sug["category_key"] = DEFAULT_CATEGORY
+            conn.execute("UPDATE transactions SET suggestion = ?, updated_at = ? WHERE id = ?",
+                         (json.dumps(sug, ensure_ascii=False), now(), t["id"]))
+        else:
+            continue
+        n += 1
+    return n
 
 
 def import_csv(conn: sqlite3.Connection, account_id: int, filename: str, data: bytes) -> dict[str, Any]:
