@@ -464,6 +464,22 @@ MIGRATIONS: list[str] = [
     );
     CREATE INDEX idx_dunning_tenancy ON dunning_letters(tenancy_id);
     """,
+    # 15 – Abmahnungen je Mietverhältnis (Vorfälle, Zustellweg, Snapshot für unveränderte Reproduktion)
+    """
+    CREATE TABLE warning_letters (
+        id INTEGER PRIMARY KEY,
+        tenancy_id INTEGER NOT NULL REFERENCES tenancies(id) ON DELETE CASCADE,
+        reason TEXT NOT NULL,
+        letter_date TEXT NOT NULL,
+        deadline TEXT,
+        incidents TEXT NOT NULL,           -- JSON: [{"date": "2026-07-15", "time": "23:30", "text": "…"}]
+        delivery TEXT NOT NULL DEFAULT '',
+        snapshot TEXT NOT NULL,
+        document_id INTEGER REFERENCES documents(id) ON DELETE SET NULL,
+        created_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_warning_tenancy ON warning_letters(tenancy_id);
+    """,
 ]
 
 

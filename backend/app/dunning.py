@@ -223,35 +223,40 @@ def render(snap: dict[str, Any]) -> bytes:
     return buf.getvalue()
 
 
+def archive_letter(conn: sqlite3.Connection, pdf: bytes, title: str, doc_type: str, ten: dict[str, Any], tenancy_id: int,
+                   letter_date: str, source: str) -> int:
+    """Schreiben an Mieter als PDF im Archiv ablegen (Vermietung › Mietverträge und Mieter), beim Mietverhältnis, durchsuchbar."""
+    ts = now()
+    area_id = conn.execute("SELECT id FROM areas WHERE key = 'vermietung'").fetchone()[0]
+    cat = conn.execute("SELECT id FROM categories WHERE area_id = ? AND name = 'Mietverträge und Mieter'", (area_id,)).fetchone()
+    sha, rel = storage.store_original(pdf, "application/pdf")
+    with tx(conn):
+        doc_id = conn.execute(
+            "INSERT INTO documents(area_id, category_id, property_id, unit_id, tenancy_id, title, original_name, doc_type, doc_date, "
+            "date_status, upload_area, status, filed_by, filed_reason, confidence, confirmed, filed_at, created_at, updated_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (area_id, cat[0] if cat else None, ten["property_id"], ten["unit_id"], tenancy_id, title, f"{title}.pdf"[:200],
+             doc_type, letter_date, "sure", "vermietung", "filed", "user", "In SmartArchive erstellt.", 1.0, 1, ts, ts, ts)).lastrowid
+        conn.execute("INSERT INTO files(document_id, role, sha256, mime, size, path, original_name, position, created_at) "
+                     "VALUES(?,?,?,?,?,?,?,?,?)", (doc_id, "original", sha, "application/pdf", len(pdf), rel, f"{title}.pdf", 0, ts))
+        conn.execute("INSERT INTO document_text(document_id, content) VALUES(?, '')", (doc_id,))
+        audit(conn, "created", "document", doc_id, {"quelle": source})
+    try:
+        documents.extract_text(conn, doc_id)
+    except Exception:  # noqa: BLE001 – Ablage darf das Schreiben nicht verhindern
+        pass
+    with tx(conn):
+        documents.index_document(conn, doc_id)
+    return doc_id
+
+
 def create(conn: sqlite3.Connection, tenancy_id: int, data: dict[str, Any], archive: bool = True) -> int:
     snap = build(conn, tenancy_id, data)
     pdf = render(snap)
     ten = snap["tenancy"]
     title = f"{KINDS[snap['kind']]} {dt(snap['letter_date'])} {ten['names']}"[:120]
-    doc_id = None
     ts = now()
-    if archive:
-        area_id = conn.execute("SELECT id FROM areas WHERE key = 'vermietung'").fetchone()[0]
-        cat = conn.execute("SELECT id FROM categories WHERE area_id = ? AND name = 'Mietverträge und Mieter'", (area_id,)).fetchone()
-        sha, rel = storage.store_original(pdf, "application/pdf")
-        with tx(conn):
-            doc_id = conn.execute(
-                "INSERT INTO documents(area_id, category_id, property_id, unit_id, tenancy_id, title, original_name, doc_type, doc_date, "
-                "date_status, upload_area, status, filed_by, filed_reason, confidence, confirmed, filed_at, created_at, updated_at) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (area_id, cat[0] if cat else None, ten["property_id"], ten["unit_id"], tenancy_id, title, f"{title}.pdf"[:200],
-                 KINDS[snap["kind"]], snap["letter_date"], "sure", "vermietung", "filed", "user", "Vom Mahnwesen erstellt.", 1.0, 1,
-                 ts, ts, ts)).lastrowid
-            conn.execute("INSERT INTO files(document_id, role, sha256, mime, size, path, original_name, position, created_at) "
-                         "VALUES(?,?,?,?,?,?,?,?,?)", (doc_id, "original", sha, "application/pdf", len(pdf), rel, f"{title}.pdf", 0, ts))
-            conn.execute("INSERT INTO document_text(document_id, content) VALUES(?, '')", (doc_id,))
-            audit(conn, "created", "document", doc_id, {"quelle": "mahnwesen"})
-        try:
-            documents.extract_text(conn, doc_id)
-        except Exception:  # noqa: BLE001 – Ablage darf das Schreiben nicht verhindern
-            pass
-        with tx(conn):
-            documents.index_document(conn, doc_id)
+    doc_id = archive_letter(conn, pdf, title, KINDS[snap["kind"]], ten, tenancy_id, snap["letter_date"], "mahnwesen") if archive else None
     with tx(conn):
         lid = conn.execute(
             "INSERT INTO dunning_letters(tenancy_id, kind, letter_date, due_date, months, total_cents, snapshot, document_id, created_at) "

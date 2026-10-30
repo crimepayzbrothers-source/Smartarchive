@@ -4,6 +4,7 @@ import { centsToInput, date, del, get, money, parseMoney, post, put } from "../a
 import { go, useLoad, useMeta, useToast, type Meta } from "../lib";
 import { BackButton, Empty, ErrorBox, Icon, Loading, Sheet } from "../components/ui";
 import { DunningPanel } from "./Dunning";
+import { WarningPanel } from "./Abmahnung";
 
 export const STATUS_LABEL: Record<string, string> = { aktiv: "aktiv", kuenftig: "künftig", beendet: "beendet" };
 const STATUS_PILL: Record<string, string> = { aktiv: "bestaetigt", kuenftig: "entwurf", beendet: "" };
@@ -427,6 +428,7 @@ export function TenancyPage({ id }: { id: number }) {
         </section>
       </div>
       <DunningPanel tenancyId={t.id} onChanged={reload} />
+      <WarningPanel tenancyId={t.id} onChanged={reload} />
       <TenancyDocuments t={t} onChanged={reload} />
       <button className="danger-link" onClick={remove}><Icon name="trash" size={18} /> Versehentlich angelegt? Löschen</button>
 

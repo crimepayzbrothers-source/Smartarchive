@@ -735,3 +735,14 @@ select.invalid, input.invalid { border-color: var(--danger); box-shadow: 0 0 0 3
 .month-pick .check span:nth-child(2) { flex: 1; }
 .month-pick-total { display: flex; justify-content: space-between; border-top: 1px solid var(--line); padding-top: .4rem; margin: .3rem 0; }
 .form .form.grid { padding: 0; }
+
+/* Abmahnungen */
+.incidents { border: 1px solid var(--line); border-radius: var(--radius); padding: .4rem .8rem .7rem; margin: 0; display: flex; flex-direction: column; gap: .6rem; }
+.incidents legend { font-weight: 600; font-size: .9rem; padding: 0 .3rem; }
+.incident { display: flex; flex-direction: column; gap: .45rem; padding-bottom: .6rem; border-bottom: 1px dashed var(--line); }
+.incident-when { display: flex; gap: .6rem; align-items: flex-end; }
+.incident-when label { flex: 1; min-width: 0; }
+.late-box { background: var(--surface-2); border-radius: var(--radius); padding: .6rem .8rem; }
+.late-box h4 { margin: 0 0 .3rem; font-size: .9rem; }
+.late-box .plain-list li { flex-wrap: wrap; }
+.warnings .panel-head { display: flex; justify-content: space-between; align-items: center; gap: .5rem; }

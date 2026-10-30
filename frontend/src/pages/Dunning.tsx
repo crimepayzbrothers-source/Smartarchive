@@ -11,7 +11,7 @@ export const monthLabel = (key: string) => `${MONTHS[Number(key.slice(5, 7)) - 1
 
 type Form = { kind: string; letter_date: string; due_date: string; months: string[]; salutation: string; extra_text: string };
 
-async function openPdf(path: string, body: any) {
+export async function openPdf(path: string, body: any) {
   // Fenster sofort öffnen (sonst blockiert der Browser das spätere Öffnen nach dem Laden)
   const w = window.open("", "_blank");
   try {
