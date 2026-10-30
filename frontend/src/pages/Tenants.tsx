@@ -262,6 +262,28 @@ export function TenancyForm({ meta, initial, onSaved, onCancel, notice, initialF
 
 // --- Übersicht ---------------------------------------------------------------
 
+const rentTotal = (x: any) => (x.cold_rent_cents || 0) + (x.bk_advance_cents || 0) + (x.hk_advance_cents || 0);
+
+// Monatliche Summe über alle angezeigten laufenden Mietverhältnisse (aktuelle Konditionen)
+function RentSummary({ items }: { items: any[] }) {
+  const running = items.filter((t) => t.status === "aktiv" && t.current_terms);
+  if (!running.length) return null;
+  const sum = (k: string) => running.reduce((a, t) => a + (t.current_terms[k] || 0), 0);
+  const cold = sum("cold_rent_cents"), bk = sum("bk_advance_cents"), hk = sum("hk_advance_cents");
+  return (
+    <div className="rent-summary" aria-label="Summe aller laufenden Mietverhältnisse">
+      <div className="rent-summary-head"><span>Monatlich, {running.length} laufende{running.length === 1 ? "s Mietverhältnis" : " Mietverhältnisse"}</span>
+        <strong>{money(cold + bk + hk)}</strong></div>
+      <div className="rent-summary-parts">
+        <span>Kaltmiete<strong>{money(cold)}</strong></span>
+        <span>BK-Vorauszahlung<strong>{money(bk)}</strong></span>
+        <span>HK-Vorauszahlung<strong>{money(hk)}</strong></span>
+      </div>
+      {running.length < items.length && <p className="hint">Beendete und künftige Mietverhältnisse sind nicht mitgezählt.</p>}
+    </div>
+  );
+}
+
 export function TenantsPage({ params }: { params: URLSearchParams }) {
   const { meta } = useMeta();
   const [status, setStatus] = useState(params.get("status") || "aktiv");
@@ -301,6 +323,7 @@ export function TenantsPage({ params }: { params: URLSearchParams }) {
         <Empty icon="building" title="Keine Mietverhältnisse">{status === "aktiv" ? "Es gibt noch kein laufendes Mietverhältnis." : "Für diesen Filter gibt es keine Einträge."}</Empty>
       ) : (
         <div className="tenant-list">
+          <RentSummary items={data} />
           {data.map((t) => (
             <a key={t.id} className={`tenant-card ${t.status}`} href={`#/mieter/${t.id}`}>
               <div className="tenant-main">
@@ -310,7 +333,10 @@ export function TenantsPage({ params }: { params: URLSearchParams }) {
               </div>
               <div className="tenant-side">
                 <span className={`status-pill ${STATUS_PILL[t.status]}`}>{STATUS_LABEL[t.status]}</span>
-                {t.current_terms && <span className="muted small-num">BK {money(t.current_terms.bk_advance_cents)} · HK {money(t.current_terms.hk_advance_cents)}</span>}
+                {t.current_terms && <>
+                  <strong className="small-num">{money(rentTotal(t.current_terms))}</strong>
+                  <span className="muted small-num rent-parts"><span>Kalt {money(t.current_terms.cold_rent_cents)}</span><span>BK {money(t.current_terms.bk_advance_cents)}</span><span>HK {money(t.current_terms.hk_advance_cents)}</span></span>
+                </>}
               </div>
             </a>
           ))}
