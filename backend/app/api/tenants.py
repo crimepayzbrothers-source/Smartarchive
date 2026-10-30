@@ -172,8 +172,35 @@ async def extract(request: Request, conn, user):
     return await run_in_threadpool(run)
 
 
+@endpoint()
+async def preview(request: Request, conn, user):
+    """Seitenbilder der gewählten Dateien zum Abtippen anzeigen (nichts wird gespeichert)."""
+    import base64
+    form = await request.form(max_files=MAX_FILES, max_fields=2)
+    datas = [(await f.read(), f.filename or "datei") for f in form.getlist("files") if hasattr(f, "read")]
+    await form.close()
+    if not datas:
+        raise ApiError(400, "Bitte eine Datei wählen.")
+    if sum(len(d) for d, _ in datas) > MAX_BYTES:
+        raise ApiError(413, "Zusammen höchstens 25 MB.")
+
+    def run() -> list[dict]:
+        pages = []
+        for idx, (data, name) in enumerate(datas):
+            try:
+                imgs = tenancy_extract.preview_pages(data, storage.sniff_mime(data, filename=name))
+            except ValueError as exc:
+                raise ApiError(400, f"{name}: {exc}") from None
+            for n, img in enumerate(imgs, 1):
+                pages.append({"file": idx, "name": name, "page": n, "pages": len(imgs),
+                              "src": "data:image/jpeg;base64," + base64.b64encode(img).decode()})
+        return pages
+    return {"pages": await run_in_threadpool(run)}
+
+
 routes = [
     Route("/api/tenancies/extract", extract, methods=["POST"]),
+    Route("/api/tenancies/preview", preview, methods=["POST"]),
     Route("/api/tenancies", list_tenancies, methods=["GET"]),
     Route("/api/tenancies", create_tenancy, methods=["POST"]),
     Route("/api/tenancies/{id:int}", get_tenancy, methods=["GET"]),

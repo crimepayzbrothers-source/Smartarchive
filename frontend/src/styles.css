@@ -661,3 +661,13 @@ select.invalid, input.invalid { border-color: var(--danger); box-shadow: 0 0 0 3
 .file-actions { display: flex; gap: .1rem; flex: none; }
 .file-actions .icon-btn { min-width: 36px; min-height: 36px; }
 .file-collector { display: flex; flex-direction: column; gap: .6rem; }
+/* Unterlagen beim Ausfüllen ansehen */
+.doc-viewer { position: sticky; top: 0; z-index: 3; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
+.doc-viewer-bar { display: flex; align-items: center; gap: .3rem; padding: .3rem .4rem; border-bottom: 1px solid var(--line); background: var(--surface-2); }
+.doc-viewer-title { flex: 1; min-width: 0; font-size: .82rem; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.doc-viewer-bar .icon-btn { min-width: 36px; min-height: 36px; font-size: 1.2rem; }
+.doc-viewer-page { max-height: 30vh; overflow: auto; background: #fff; overscroll-behavior: contain; }
+.doc-viewer-page img { display: block; width: 100%; height: auto; }
+.doc-viewer-page.zoom img { width: 220%; max-width: none; }
+.manual-hint { flex-direction: column; align-items: flex-start; }
+.tenancy-form.with-viewer input, .tenancy-form.with-viewer select, .tenancy-form.with-viewer textarea { scroll-margin-top: calc(30vh + 64px); }

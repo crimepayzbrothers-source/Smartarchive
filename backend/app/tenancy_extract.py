@@ -326,3 +326,28 @@ def merge(local: dict[str, Any], ai: list[dict[str, Any]]) -> list[dict[str, Any
         out["parties"] = a["parties"]
     out["missing"] = [k for k in FIELDS if not out.get(k)]
     return [out]
+
+
+# --- Vorschau zum Abtippen (z. B. handschriftlich ausgefüllte Verträge) -------------------
+
+def preview_pages(data: bytes, mime: str, max_pages: int = MAX_PAGES) -> list[bytes]:
+    """JPEG-Seiten zum Ansehen beim Ausfüllen. Es wird nichts gespeichert."""
+    out: list[bytes] = []
+    if mime.startswith("image/"):
+        with Image.open(io.BytesIO(data)) as im:
+            im = ImageOps.exif_transpose(im).convert("RGB")
+            im.thumbnail((1800, 1800))
+            buf = io.BytesIO()
+            im.save(buf, format="JPEG", quality=82)
+            out.append(buf.getvalue())
+        return out
+    if mime == "application/pdf":
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "in.pdf"
+            src.write_bytes(data)
+            subprocess.run(["pdftoppm", "-r", "130", "-jpeg", "-jpegopt", "quality=80", "-l", str(max_pages), str(src), f"{tmp}/p"],
+                           check=True, timeout=300)
+            for p in sorted(Path(tmp).glob("p*.jpg")):
+                out.append(p.read_bytes())
+        return out
+    raise ValueError("Bitte PDF oder Bilddateien verwenden.")

@@ -38,7 +38,7 @@ function toTerm(t: any): Term {
     hk: centsToInput(t.hk_advance_cents), persons: t.persons ?? "", note: t.note || "" };
 }
 
-export function TenancyForm({ meta, initial, onSaved, onCancel, notice, initialFiles = [] }: { meta: Meta; initial: any; onSaved: (t: any) => void; onCancel?: () => void; notice?: ReactNode; initialFiles?: File[] }) {
+export function TenancyForm({ meta, initial, onSaved, onCancel, notice, initialFiles = [], viewDocs = false }: { meta: Meta; initial: any; onSaved: (t: any) => void; onCancel?: () => void; notice?: ReactNode; initialFiles?: File[]; viewDocs?: boolean }) {
   const toast = useToast();
   const editing = Boolean(initial.id);
   const [propertyId, setPropertyId] = useState<number | null>(initial.property_id ?? meta.properties[0]?.id ?? null);
@@ -55,6 +55,7 @@ export function TenancyForm({ meta, initial, onSaved, onCancel, notice, initialF
   const [docs, setDocs] = useState<File[]>(initialFiles);
   const [reading, setReading] = useState(false);
   const [readInfo, setReadInfo] = useState<string | null>(null);
+  const [showDocs, setShowDocs] = useState(viewDocs && initialFiles.length > 0);
 
   // Angaben aus den Unterlagen auslesen: füllt nur leere Felder, überschreibt nichts, was Sie eingetragen haben.
   const readDocs = async () => {
@@ -144,7 +145,8 @@ export function TenancyForm({ meta, initial, onSaved, onCancel, notice, initialF
   };
 
   return (
-    <form className="form tenancy-form" onSubmit={submit} noValidate>
+    <form className={`form tenancy-form ${showDocs && docs.length ? "with-viewer" : ""}`} onSubmit={submit} noValidate>
+      {showDocs && docs.length > 0 && <DocViewer files={docs} onClose={() => setShowDocs(false)} />}
       {notice}
       <fieldset className="form-block">
         <legend>Mietsache</legend>
@@ -176,10 +178,12 @@ export function TenancyForm({ meta, initial, onSaved, onCancel, notice, initialF
         {docs.length > 0 && (
           <div className="row-actions">
             <button type="button" className="secondary" disabled={reading || !propertyId} onClick={readDocs}>{reading ? "Wird ausgelesen …" : "Angaben aus Unterlagen auslesen"}</button>
+            <button type="button" className="secondary" onClick={() => setShowDocs(!showDocs)}><Icon name="file" size={16} /> {showDocs ? "Ansicht schließen" : "Beim Ausfüllen anzeigen"}</button>
           </div>
         )}
         {readInfo && <p className="hint">{readInfo}</p>}
-        <p className="hint">Die Dateien werden beim Speichern im Archiv (Vermietung) abgelegt und diesem Mietverhältnis zugeordnet. Auslesen füllt nur leere Felder.</p>
+        <p className="hint">Die Dateien werden beim Speichern im Archiv (Vermietung) abgelegt und diesem Mietverhältnis zugeordnet. Auslesen füllt nur leere Felder.
+          Handschrift erkennt die Texterkennung nicht – dann „Beim Ausfüllen anzeigen“ und die Angaben abtippen.</p>
       </fieldset>
 
       <fieldset className="form-block">
@@ -549,6 +553,9 @@ export function TenancyImport({ meta, propertyId, onDone, onCancel }: { meta: Me
       setBusy(false);
     }
   };
+  if (chosen?.manual) {
+    return <TenancyForm meta={meta} initial={{ property_id: pid }} initialFiles={files} viewDocs onCancel={() => setChosen(null)} onSaved={onDone} />;
+  }
   if (chosen) {
     const r = chosen;
     const start = r.contract_start || "";
@@ -569,7 +576,7 @@ export function TenancyImport({ meta, propertyId, onDone, onCancel }: { meta: Me
       </div>
     );
     return <TenancyForm meta={meta} initial={initial} notice={notice} onCancel={() => setChosen(null)}
-      initialFiles={archive ? files : []} onSaved={onDone} />;
+      initialFiles={archive ? files : []} viewDocs onSaved={onDone} />;
   }
 
   return (
@@ -588,7 +595,13 @@ export function TenancyImport({ meta, propertyId, onDone, onCancel }: { meta: Me
 
       {res && (
         <div className="import-results">
-          {res.chars < 30 && <p className="notice warn">Kaum Text erkannt. Bitte schärferes Foto oder Screenshot in voller Auflösung verwenden.</p>}
+          {(res.chars < 30 || res.results.every((r: any) => (r.missing?.length || 0) >= 3)) && (
+            <div className="notice warn manual-hint">
+              <span>Kaum verwertbare Angaben erkannt – z. B. bei handschriftlich ausgefüllten Verträgen. Tragen Sie die Angaben selbst ein;
+                die Unterlagen werden dabei oben angezeigt.</span>
+              <button className="primary" onClick={() => setChosen({ manual: true })}>Selbst eintragen mit Ansicht</button>
+            </div>
+          )}
           {res.results.map((r: any, i: number) => (
             <div key={i} className="import-result">
               <strong>{r.parties?.length ? r.parties.map((p: any) => `${p.first_name} ${p.last_name}`.trim()).join(", ") : "Vertragspartner nicht erkannt"}</strong>
@@ -726,5 +739,40 @@ export function TenancyDocuments({ t, onChanged }: { t: any; onChanged: () => vo
       <FileCollector files={files} onChange={setFiles} />
       {files.length > 0 && <button className="primary" disabled={busy} onClick={save}>{busy ? "Wird hochgeladen …" : `${files.length} Datei(en) archivieren`}</button>}
     </section>
+  );
+}
+
+/** Unterlagen beim Ausfüllen ansehen (Seitenbilder vom Server; nichts wird gespeichert). */
+export function DocViewer({ files, onClose }: { files: File[]; onClose: () => void }) {
+  const [pages, setPages] = useState<any[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [i, setI] = useState(0);
+  const [zoom, setZoom] = useState(false);
+  const key = files.map((f) => `${f.name}-${f.size}-${f.lastModified}`).join("|");
+  useEffect(() => {
+    let alive = true;
+    const form = new FormData();
+    files.forEach((f) => form.append("files", f, f.name));
+    setPages(null); setErr(null); setI(0);
+    fetch("/api/tenancies/preview", { method: "POST", body: form, headers: { "X-Requested-With": "SmartArchive" }, credentials: "same-origin" })
+      .then(async (r) => { const d = await r.json().catch(() => null); if (!r.ok) throw new Error(d?.error || `Fehler ${r.status}`); if (alive) setPages(d.pages); })
+      .catch((e) => alive && setErr(e.message));
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+  const p = pages?.[i];
+  return (
+    <div className="doc-viewer">
+      <div className="doc-viewer-bar">
+        <button type="button" className="icon-btn" aria-label="Vorige Seite" disabled={!pages || i === 0} onClick={() => setI(i - 1)}>‹</button>
+        <span className="doc-viewer-title">{p ? `${p.name}${p.pages > 1 ? ` · Seite ${p.page}/${p.pages}` : ""} (${i + 1}/${pages!.length})` : err ? "Vorschau nicht möglich" : "Wird geladen …"}</span>
+        <button type="button" className="icon-btn" aria-label="Nächste Seite" disabled={!pages || i >= pages.length - 1} onClick={() => setI(i + 1)}>›</button>
+        <button type="button" className="secondary small" onClick={() => setZoom(!zoom)}>{zoom ? "Einpassen" : "Vergrößern"}</button>
+        <button type="button" className="icon-btn" aria-label="Ansicht schließen" onClick={onClose}><Icon name="close" size={18} /></button>
+      </div>
+      <div className={`doc-viewer-page ${zoom ? "zoom" : ""}`}>
+        {err ? <p className="notice error small">{err}</p> : p ? <img src={p.src} alt={`${p.name} Seite ${p.page}`} /> : <Loading />}
+      </div>
+    </div>
   );
 }

@@ -139,3 +139,18 @@ def test_upload_documents_to_tenancy(client):
     d = client.get(f"/api/documents/{docs[0]['id']}").json()
     assert d["property_id"] == pid and d["unit_id"] == uid
     assert client.post("/api/upload", data={"tenancy_id": "999"}, files=files[:1], headers=HEADERS).status_code == 400
+
+
+
+def test_preview_pages_for_manual_entry(client):
+    from conftest import make_pdf
+    from PIL import Image
+    png = io.BytesIO()
+    Image.new("RGB", (400, 600), "white").save(png, format="PNG")
+    files = [("files", ("vertrag.pdf", make_pdf(["Seite 1"]), "application/pdf")), ("files", ("foto.png", png.getvalue(), "image/png"))]
+    r = client.post("/api/tenancies/preview", files=files, headers=HEADERS)
+    assert r.status_code == 200, r.text
+    pages = r.json()["pages"]
+    assert [(p["name"], p["page"]) for p in pages] == [("vertrag.pdf", 1), ("foto.png", 1)]
+    assert all(p["src"].startswith("data:image/jpeg;base64,") for p in pages)
+    assert client.get("/api/tenancies").json() == []  # nichts gespeichert
