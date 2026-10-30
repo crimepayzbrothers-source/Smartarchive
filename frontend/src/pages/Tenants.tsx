@@ -323,7 +323,6 @@ export function TenantsPage({ params }: { params: URLSearchParams }) {
         <Empty icon="building" title="Keine Mietverhältnisse">{status === "aktiv" ? "Es gibt noch kein laufendes Mietverhältnis." : "Für diesen Filter gibt es keine Einträge."}</Empty>
       ) : (
         <div className="tenant-list">
-          <RentSummary items={data} />
           {data.map((t) => (
             <a key={t.id} className={`tenant-card ${t.status}`} href={`#/mieter/${t.id}`}>
               <div className="tenant-main">
@@ -340,6 +339,7 @@ export function TenantsPage({ params }: { params: URLSearchParams }) {
               </div>
             </a>
           ))}
+          <RentSummary items={data} />
         </div>
       )}
 

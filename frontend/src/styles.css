@@ -748,7 +748,7 @@ select.invalid, input.invalid { border-color: var(--danger); box-shadow: 0 0 0 3
 .warnings .panel-head { display: flex; justify-content: space-between; align-items: center; gap: .5rem; }
 
 /* Mieterliste: Monatssumme */
-.rent-summary { background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--vermietung); border-radius: var(--radius); padding: .75rem .95rem; box-shadow: var(--shadow); }
+.rent-summary { margin-top: .4rem; background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--vermietung); border-radius: var(--radius); padding: .75rem .95rem; box-shadow: var(--shadow); }
 .rent-summary-head { display: flex; justify-content: space-between; align-items: baseline; gap: .75rem; }
 .rent-summary-head span { color: var(--ink-2); font-size: .88rem; }
 .rent-summary-head strong { font-size: 1.25rem; font-variant-numeric: tabular-nums; }
