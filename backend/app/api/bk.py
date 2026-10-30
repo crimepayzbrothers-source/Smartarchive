@@ -35,7 +35,7 @@ def _period_or_404(conn, period_id: int) -> dict:
 
 @endpoint()
 async def meta(request: Request, conn, user):
-    return {"cost_types": [{"key": k, **v} for k, v in bk.COST_TYPES.items()],
+    return {"cost_types": [{**{a: b for a, b in v.items() if a != "key"}, "key": k, "default_key": v["key"]} for k, v in bk.COST_TYPES.items()],
             "keys": [{"key": k, **v} for k, v in bk.KEYS.items()],
             "landlord": get_setting(conn, "landlord", {}) or {}}
 

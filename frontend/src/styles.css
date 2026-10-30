@@ -561,3 +561,76 @@ table.terms-table { width: 100%; border-collapse: collapse; font-size: .88rem; f
 .occ-legend { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .15rem; font-size: .86rem; }
 .occ-legend li { display: flex; justify-content: space-between; gap: .75rem; flex-wrap: wrap; }
 @media (min-width: 720px) { .party-row.form.grid, .term-row.form.grid { grid-template-columns: 1fr 1fr; } }
+
+/* Betriebskostenabrechnung */
+.bk, .bk-wizard { display: flex; flex-direction: column; gap: 1rem; }
+.section-title { font-size: 1.05rem; margin: .5rem 0 0; }
+.notice.ok { background: var(--vermietung-soft); color: var(--ok); }
+.neg { color: var(--danger); }
+.pos { color: var(--ok); }
+.warn, .warn-text { color: var(--ochre); }
+details.collapsible > summary { list-style: none; cursor: pointer; }
+details.collapsible > summary::-webkit-details-marker { display: none; }
+details.collapsible > summary h2 { display: inline; }
+details.collapsible > summary::after { content: "▾"; float: right; color: var(--ink-3); }
+details.collapsible[open] > summary { margin-bottom: .8rem; }
+.bk-kpis { display: grid; grid-template-columns: repeat(2, 1fr); gap: .5rem; }
+.bk-kpis > div, .bk-check { display: flex; flex-direction: column; gap: .1rem; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: .6rem .75rem; text-align: left; min-height: 0; color: var(--ink); }
+.bk-kpis span { font-size: .76rem; color: var(--ink-3); font-weight: 560; }
+.bk-kpis strong { font-variant-numeric: tabular-nums; font-size: 1.02rem; }
+@media (min-width: 720px) { .bk-kpis { grid-template-columns: repeat(4, 1fr); } }
+.stepper { display: flex; gap: .35rem; overflow-x: auto; padding-bottom: .2rem; scrollbar-width: thin; }
+.stepper button { flex: none; display: inline-flex; align-items: center; gap: .4rem; min-height: 38px; padding: .35rem .8rem .35rem .4rem; border-radius: 99px; background: var(--surface-2); color: var(--ink-2); font-weight: 580; font-size: .88rem; border: 1px solid transparent; }
+.stepper .num { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: var(--surface); font-size: .78rem; font-variant-numeric: tabular-nums; }
+.stepper button.on { background: var(--petrol); color: var(--on-petrol, #fff); }
+.stepper button.on .num { background: rgba(255,255,255,.2); color: inherit; }
+.stepper button.done .num { background: var(--vermietung-soft); color: var(--ok); }
+.step-nav { justify-content: space-between; }
+.import-box { border: 1px solid var(--line); border-radius: var(--radius); padding: .8rem; margin: .6rem 0 1rem; background: var(--surface-2); }
+.import-list { list-style: none; margin: .4rem 0; padding: 0; display: flex; flex-direction: column; gap: .5rem; }
+.import-list li { display: flex; flex-wrap: wrap; gap: .5rem; justify-content: space-between; align-items: center; }
+.import-list li > span { flex: 1 1 220px; min-width: 0; }
+.import-list select { flex: 0 1 260px; }
+.cost-groups { display: flex; flex-direction: column; gap: .8rem; margin: .8rem 0; }
+.cost-group { border: 1px solid var(--line); border-left: 4px solid var(--vermietung); border-radius: var(--radius); padding: .6rem .8rem; }
+.cost-group.excluded { border-left-color: var(--line); background: var(--surface-2); }
+.cost-group-head { display: flex; flex-wrap: wrap; gap: .3rem .75rem; align-items: baseline; margin-bottom: .3rem; }
+.cost-group-head .num { margin-left: auto; }
+.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cost-group .plain-list li { flex-wrap: wrap; }
+.cost-group .plain-list select { flex: 0 1 220px; font-size: .85rem; min-height: 34px; padding: .25rem .5rem; }
+.add-cost { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+.add-cost h3 { margin: 0; }
+.key-list, .value-rows, .adv-list { display: flex; flex-direction: column; gap: .6rem; margin: .6rem 0; }
+.key-row, .value-row { display: grid; grid-template-columns: 1fr; gap: .4rem; padding: .6rem 0; border-top: 1px solid var(--line); align-items: center; }
+@media (min-width: 720px) {
+  .key-row { grid-template-columns: minmax(180px, 1.2fr) 200px 1.5fr auto; }
+  .value-row { grid-template-columns: minmax(160px, 1fr) 140px auto 1fr auto; }
+}
+.small-check { min-height: 34px; }
+.adv-row { border: 1px solid var(--line); border-left: 4px solid var(--ochre); border-radius: var(--radius); padding: .7rem .85rem; display: flex; flex-direction: column; gap: .35rem; }
+.adv-row.ok { border-left-color: var(--vermietung); }
+.adv-head { display: flex; flex-wrap: wrap; gap: .3rem .7rem; align-items: center; }
+.adv-row .inline-add label { display: flex; flex-direction: column; gap: .2rem; font-size: .84rem; color: var(--ink-2); flex: 1 1 130px; }
+.adv-row .inline-add button { align-self: flex-end; }
+.result-table tr.clickable { cursor: pointer; }
+.result-table tr.detail > td { background: var(--surface-2); }
+.result-table .muted-row td { color: var(--ink-3); }
+.issue-group { border-radius: var(--radius); padding: .6rem .8rem; margin: .6rem 0; }
+.issue-group h3 { margin: 0 0 .3rem; font-size: .95rem; }
+.issue-group ul { margin: 0; padding-left: 1.1rem; display: flex; flex-direction: column; gap: .35rem; font-size: .9rem; }
+.issue-group.kritisch { background: var(--danger-soft); }
+.issue-group.kritisch h3 { color: var(--danger); }
+.issue-group.warnung { background: var(--ochre-soft); }
+.issue-group.info { background: var(--surface-2); }
+.issue-group.warnung ul { list-style: none; padding-left: 0; }
+.issue-group .check { align-items: flex-start; margin: 0; }
+.issue-group .check input { margin-top: .2rem; }
+.btn-link { display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--line); border-radius: var(--radius); padding: .35rem .75rem; min-height: 36px; text-decoration: none; white-space: nowrap; }
+.btn-link:hover { text-decoration: none; }
+.cost-group .plain-list li > span:first-child { flex: 1 1 100%; }
+.cost-group .plain-list li select { flex: 1 1 180px; }
+@media (min-width: 720px) { .cost-group .plain-list li > span:first-child { flex: 1 1 0; } .cost-group .plain-list li select { flex: 0 1 230px; } }
+.result-table { font-size: .86rem; }
+.result-table td:nth-child(n+2), .result-table th:nth-child(n+2) { text-align: right; white-space: nowrap; }
+.result-table tr.detail td, .result-table tr.detail th { text-align: left; white-space: normal; }

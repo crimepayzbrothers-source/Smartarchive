@@ -177,6 +177,7 @@ export function TenantsPage({ params }: { params: URLSearchParams }) {
         <nav className="register small" aria-label="Ansicht">
           <button onClick={() => go("/objekte")}>Objekte</button>
           <button className="on">Mieter</button>
+          <button onClick={() => go("/betriebskosten")}>Betriebskosten</button>
         </nav>
         <button className="primary" onClick={() => setCreating(true)} disabled={!meta?.properties.length}><Icon name="plus" size={18} /> Mietverhältnis anlegen</button>
       </div>
