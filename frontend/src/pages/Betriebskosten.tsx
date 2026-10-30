@@ -3,6 +3,7 @@ import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent } from "
 import { centsToInput, date, del, get, money, parseMoney, patch, post, put } from "../api";
 import { go, useLoad, useMeta, useToast } from "../lib";
 import { BackButton, Empty, ErrorBox, Icon, Loading } from "../components/ui";
+import { ConfirmDelete, SwipeRow } from "../components/SwipeRow";
 
 type BkMeta = { cost_types: { key: string; label: string; ref: string; key_default?: string; heat?: boolean; excluded?: boolean }[]; keys: { key: string; label: string; why: string }[]; landlord: any };
 
@@ -30,6 +31,18 @@ export function BkOverview({ params }: { params: URLSearchParams }) {
   const nextYear = last ? Number(last.end.slice(0, 4)) + 1 : new Date().getFullYear() - 1;
   const [year, setYear] = useState<number | null>(null);
   const y = year ?? nextYear;
+  const [doomed, setDoomed] = useState<any>(null);
+  const [deleting, setDeleting] = useState(false);
+  const removePeriod = async () => {
+    setDeleting(true);
+    try {
+      await del(`/api/bk/periods/${doomed.id}`);
+      toast({ kind: "ok", text: `Abrechnung ${doomed.start.slice(0, 4)} gelöscht.` });
+      setDoomed(null); reload();
+    } catch (err: any) {
+      toast({ kind: "error", text: err.message });
+    } finally { setDeleting(false); }
+  };
 
   const create = async (e: FormEvent) => {
     e.preventDefault();
@@ -73,7 +86,8 @@ export function BkOverview({ params }: { params: URLSearchParams }) {
           {loading && !data ? <Loading /> : !data?.length ? <Empty icon="receipt" title="Noch keine Abrechnung">Beginnen Sie oben mit dem Jahr, das Sie abrechnen möchten.</Empty> : (
             <div className="tenant-list">
               {data.map((p) => (
-                <a key={p.id} className={`tenant-card ${p.status === "freigegeben" ? "aktiv" : "kuenftig"}`} href={`#/betriebskosten/${p.id}`}>
+                <SwipeRow key={p.id} disabled={p.status === "freigegeben" || !!p.version} asking={doomed?.id === p.id} onDelete={() => setDoomed(p)}>
+                <a className={`tenant-card ${p.status === "freigegeben" ? "aktiv" : "kuenftig"}`} href={`#/betriebskosten/${p.id}`}>
                   <div className="tenant-main">
                     <strong>{p.property_name} · {p.start.slice(0, 4)}</strong>
                     <span className="muted">{date(p.start)} – {date(p.end)}</span>
@@ -83,9 +97,16 @@ export function BkOverview({ params }: { params: URLSearchParams }) {
                     <span className={`status-pill ${p.status === "freigegeben" ? "bestaetigt" : "entwurf"}`}>{p.status === "freigegeben" ? `freigegeben${p.version ? ` · Fassung ${p.version}` : ""}` : "Entwurf"}</span>
                   </div>
                 </a>
+                </SwipeRow>
               ))}
             </div>
           )}
+          {data?.some((p) => p.status !== "freigegeben" && !p.version) && <p className="hint swipe-hint">Entwürfe zum Löschen nach links wischen. Freigegebene Abrechnungen bleiben zur Nachvollziehbarkeit erhalten.</p>}
+          <ConfirmDelete open={!!doomed} title="Abrechnung löschen?" busy={deleting} onClose={() => setDoomed(null)} onConfirm={removePeriod}
+            confirmLabel="Abrechnung löschen"
+            text={doomed && <>
+              <p>Den Entwurf <strong>{doomed.property_name} · {doomed.start.slice(0, 4)}</strong> mit allen erfassten Kosten, Schlüsseln, Werten und Vorauszahlungen löschen?</p>
+              <p className="muted">Das lässt sich nicht rückgängig machen. Belege und Ausgaben im Archiv bleiben unverändert.</p></>} />
           <LandlordPanel onSaved={reload} />
         </>
       )}
@@ -232,6 +253,7 @@ function CostsStep({ d, meta, onChange }: { d: any; meta: BkMeta; onChange: (d: 
   const { busy, run } = useAction(onChange);
   const [importing, setImporting] = useState<any[] | null>(null);
   const [choice, setChoice] = useState<Record<number, string>>({});
+  const [doomed, setDoomed] = useState<any>(null);
   const [form, setForm] = useState({ cost_type: "grundsteuer", description: "", amount: "", invoice_date: "", unit_id: "" });
   const types = meta.cost_types;
   const label = (k: string) => types.find((t) => t.key === k)?.label || k;
@@ -294,7 +316,7 @@ function CostsStep({ d, meta, onChange }: { d: any; meta: BkMeta; onChange: (d: 
               <div className="cost-group-head"><strong>{l.label}</strong><span className="muted">{l.ref}</span><strong className="num">{money(l.total)}</strong></div>
               <ul className="plain-list">
                 {l.items.map((c: any) => (
-                  <li key={c.id}>
+                  <li key={c.id} className="swipe-li"><SwipeRow className="cost-item" asking={doomed?.id === c.id} onDelete={() => setDoomed(c)}>
                     <span>{c.description || "ohne Beschreibung"}<span className="muted sub-line">{c.invoice_date ? date(c.invoice_date) : "ohne Datum"}
                       {c.unit_name ? ` · nur ${c.unit_name}` : ""}{c.origin === "ausgabe" ? " · aus Ausgaben" : ""}
                       {c.document_id ? <> · <a href={`#/dokument/${c.document_id}`}>Beleg</a></> : ""}</span></span>
@@ -302,14 +324,21 @@ function CostsStep({ d, meta, onChange }: { d: any; meta: BkMeta; onChange: (d: 
                       {types.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
                     </select>
                     <span className="num">{money(c.amount_cents)}</span>
-                    <button className="icon-btn" aria-label="Entfernen" onClick={() => run(() => del(`/api/bk/costs/${c.id}`))}><Icon name="trash" size={16} /></button>
-                  </li>
+                    <button className="icon-btn" aria-label="Entfernen" onClick={() => setDoomed(c)}><Icon name="trash" size={16} /></button>
+                  </SwipeRow></li>
                 ))}
               </ul>
             </div>
           ))}
+          <p className="hint swipe-hint">Zum Löschen eine Position nach links wischen oder den Papierkorb antippen.</p>
         </div>
       )}
+      <ConfirmDelete open={!!doomed} title="Kostenposition löschen?" busy={busy} onClose={() => setDoomed(null)}
+        confirmLabel="Position löschen"
+        onConfirm={async () => { const r = await run(() => del(`/api/bk/costs/${doomed.id}`), "Kostenposition gelöscht."); if (r) setDoomed(null); }}
+        text={doomed && <>
+          <p><strong>{doomed.description || "ohne Beschreibung"}</strong> · {money(doomed.amount_cents)}{doomed.invoice_date ? ` · ${date(doomed.invoice_date)}` : ""}</p>
+          <p className="muted">Die Position wird aus dieser Abrechnung entfernt.{doomed.origin === "ausgabe" ? " Die Ausgabe selbst und ihr Beleg bleiben erhalten und können erneut übernommen werden." : ""}</p></>} />
 
       <form className="form grid add-cost" onSubmit={add}>
         <h3 className="span2">Kosten manuell erfassen</h3>

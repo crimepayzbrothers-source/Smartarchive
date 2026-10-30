@@ -249,3 +249,14 @@ def test_bank_suggestion_and_overlap(client):
     assert s["count"] == 12 and s["suggestion"] == {"bk": 132000, "hk": 60000}
     # Vorschlag ist nur Vorschlag: ohne Bestätigung bleibt die Prüfung kritisch
     assert "vz" in _codes(client.get(f"/api/bk/periods/{period}").json(), "kritisch")
+
+
+def test_delete_draft_period_and_cost(client):
+    pid, units, t, period = _setup(client)
+    data = _cost(client, period, "grundsteuer", 60000, "Grundsteuer")
+    cid = data["lines"][0]["items"][0]["id"]
+    assert client.delete(f"/api/bk/costs/{cid}", headers=HEADERS).json()["lines"] == []
+    _cost(client, period, "muell", 30000, "Müll")
+    assert client.delete(f"/api/bk/periods/{period}", headers=HEADERS).status_code == 200
+    assert client.get("/api/bk/periods", params={"property_id": pid}).json() == []
+    assert client.get(f"/api/bk/periods/{period}").status_code == 404
