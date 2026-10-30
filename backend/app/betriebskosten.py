@@ -215,7 +215,7 @@ def add_cost(conn: sqlite3.Connection, period_id: int, data: dict[str, Any]) -> 
 # --- Belegung und Gewichte -----------------------------------------------------------
 
 def _units(conn: sqlite3.Connection, p: dict[str, Any]) -> list[dict[str, Any]]:
-    us = rows(conn.execute("SELECT id, name, living_area FROM units WHERE property_id = ? ORDER BY name", (p["property_id"],)))
+    us = rows(conn.execute("SELECT id, name, living_area FROM units WHERE property_id = ? ORDER BY id", (p["property_id"],)))
     return us or [{"id": None, "name": p["property_name"], "living_area": p["property_area"]}]
 
 

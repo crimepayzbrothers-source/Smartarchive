@@ -133,3 +133,25 @@ def test_object_rules_and_unit_protection(client):
         conn.close()
     assert "Muster" not in log and "example.org" not in log
     assert client.get(f"/api/tenancies/{t['id']}").status_code == 404
+
+
+def test_tenant_change_with_gap_is_vacancy(client):
+    pid = _prop(client, "Hauptstraße 15", "Hauptstraße 15, 55758 Schmidt-Hachenbach")
+    units = {n: _unit(client, pid, n, a) for n, a in (("EG", 70), ("OG links", 55), ("OG Mitte", 40), ("OG rechts", 55), ("Galerie", 35))}
+    old = _tenancy(client, pid, units["OG Mitte"], "2022-03-01", last="Vorher")
+    client.post(f"/api/tenancies/{old['id']}/end", json={"contract_end": "2026-03-31", "move_out": "2026-03-28"}, headers=HEADERS)
+    # Nachmieter erst ab 15.05. – die Lücke ist ohne weitere Eingabe Leerstand
+    new = _tenancy(client, pid, units["OG Mitte"], "2026-05-15", last="Nachher",
+                   parties=[{"first_name": "Eva", "last_name": "Nachher"}, {"first_name": "Tom", "last_name": "Nachher"}])
+    assert new["names"] == "Eva Nachher, Tom Nachher"            # mehrere Mieter in einer Wohnung
+    assert new["previous"]["id"] == old["id"] and new["vacancy_before"] == {"from": "2026-04-01", "to": "2026-05-14", "days": 44}
+    old = client.get(f"/api/tenancies/{old['id']}").json()
+    assert old["next"]["id"] == new["id"] and old["vacancy_after"]["days"] == 44
+    occ = {u["unit_name"]: u for u in _occ(client, pid)}
+    mitte = occ["OG Mitte"]["segments"]
+    assert [(s["names"] or "Leerstand", s["from"], s["days"]) for s in mitte] == [
+        ("Anna Vorher", "2026-01-01", 90), ("Leerstand", "2026-04-01", 44), ("Eva Nachher, Tom Nachher", "2026-05-15", 231)]
+    assert occ["Galerie"]["days_vacant"] == 365 and len(occ) == 5
+    # Direkt anschließender Wechsel: kein Leerstand
+    nxt = client.get(f"/api/tenancies/{new['id']}").json()
+    assert nxt["vacancy_after"] is None and nxt["next"] is None

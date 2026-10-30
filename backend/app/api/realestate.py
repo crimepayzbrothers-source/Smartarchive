@@ -46,7 +46,7 @@ async def list_properties(request: Request, conn, user):
         p["expenses_year"] = conn.execute(
             "SELECT COALESCE(SUM(amount_cents),0) FROM expenses WHERE property_id = ? AND substr(paid_on,1,4) = ?",
             (p["id"], str(year))).fetchone()[0]
-        p["units"] = rows(conn.execute("SELECT * FROM units WHERE property_id = ? ORDER BY name", (p["id"],)))
+        p["units"] = rows(conn.execute("SELECT * FROM units WHERE property_id = ? ORDER BY id", (p["id"],)))
     return {"year": year, "properties": props}
 
 
@@ -56,7 +56,7 @@ async def get_property(request: Request, conn, user):
     p = row(conn.execute("SELECT * FROM properties WHERE id = ?", (pid,)))
     if not p:
         raise KeyError(pid)
-    p["units"] = rows(conn.execute("SELECT * FROM units WHERE property_id = ? ORDER BY name", (pid,)))
+    p["units"] = rows(conn.execute("SELECT * FROM units WHERE property_id = ? ORDER BY id", (pid,)))
     p["years"] = rows(conn.execute(
         "SELECT substr(paid_on,1,4) AS year, SUM(amount_cents) AS total, COUNT(*) AS count FROM expenses "
         "WHERE property_id = ? AND paid_on IS NOT NULL GROUP BY year ORDER BY year DESC", (pid,)))

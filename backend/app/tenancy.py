@@ -133,7 +133,29 @@ def load(conn: sqlite3.Connection, tenancy_id: int) -> dict[str, Any]:
     t["names"] = ", ".join(f"{p['first_name']} {p['last_name']}".strip() for p in t["parties"])
     t["status"] = status(t)
     t["current_terms"] = term_at(t["terms"], min(max(date.today(), span(t)[0]), span(t)[1] or date.max))
+    t.update(neighbours(conn, t))
     return t
+
+
+def neighbours(conn: sqlite3.Connection, t: dict[str, Any]) -> dict[str, Any]:
+    """Vor- und Nachmieter derselben Wohnung und die Leerstandszeiten dazwischen (automatisch, nichts zu erfassen)."""
+    start, end = span(t)
+    others = rows(conn.execute("SELECT * FROM tenancies WHERE property_id = ? AND COALESCE(unit_id, 0) = COALESCE(?, 0) AND id != ?",
+                               (t["property_id"], t.get("unit_id"), t["id"])))
+    before = [o for o in others if span(o)[1] and span(o)[1] < start]
+    after = [o for o in others if span(o)[0] > (end or date.max)]
+    prev = max(before, key=lambda o: span(o)[1], default=None)
+    nxt = min(after, key=lambda o: span(o)[0], default=None)
+
+    def gap(a: date, b: date) -> dict[str, Any] | None:
+        return {"from": a.isoformat(), "to": b.isoformat(), "days": days(a, b)} if a <= b else None
+
+    return {
+        "previous": {"id": prev["id"], "names": party_names(conn, prev["id"]), "end": span(prev)[1].isoformat()} if prev else None,
+        "next": {"id": nxt["id"], "names": party_names(conn, nxt["id"]), "start": nxt["contract_start"]} if nxt else None,
+        "vacancy_before": gap(span(prev)[1] + timedelta(days=1), start - timedelta(days=1)) if prev else None,
+        "vacancy_after": gap(end + timedelta(days=1), span(nxt)[0] - timedelta(days=1)) if nxt and end else None,
+    }
 
 
 def term_at(terms: list[dict[str, Any]], day: date) -> dict[str, Any] | None:
@@ -249,7 +271,7 @@ def occupancy(conn: sqlite3.Connection, property_id: int, unit_id: int | None, s
 
 
 def property_occupancy(conn: sqlite3.Connection, property_id: int, start: date, end: date) -> list[dict[str, Any]]:
-    units = rows(conn.execute("SELECT id, name, living_area FROM units WHERE property_id = ? ORDER BY name", (property_id,)))
+    units = rows(conn.execute("SELECT id, name, living_area FROM units WHERE property_id = ? ORDER BY id", (property_id,)))
     targets = units or [{"id": None, "name": "Ganzes Objekt", "living_area": None}]
     total = days(start, end)
     result = []

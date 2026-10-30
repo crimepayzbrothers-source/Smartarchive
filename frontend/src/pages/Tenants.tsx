@@ -1,5 +1,5 @@
 // Mieterverwaltung: Übersicht, Mietverhältnis anlegen/ändern, Mieterwechsel, Konditionen-Verlauf, Belegung je Objekt.
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { centsToInput, date, del, get, money, parseMoney, post, put } from "../api";
 import { go, useLoad, useMeta, useToast, type Meta } from "../lib";
 import { BackButton, Empty, ErrorBox, Icon, Loading, Sheet } from "../components/ui";
@@ -10,6 +10,11 @@ const STATUS_PILL: Record<string, string> = { aktiv: "bestaetigt", kuenftig: "en
 const nextDay = (iso: string) => {
   const d = new Date(iso + "T12:00:00Z");
   d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+};
+const prevDay = (iso: string) => {
+  const d = new Date(iso + "T12:00:00Z");
+  d.setUTCDate(d.getUTCDate() - 1);
   return d.toISOString().slice(0, 10);
 };
 const toInt = (s: string) => (s.trim() === "" ? null : Number.parseInt(s, 10));
@@ -48,8 +53,14 @@ export function TenancyForm({ meta, initial, onSaved, onCancel }: { meta: Meta; 
   const [busy, setBusy] = useState(false);
   const prop = meta.properties.find((p) => p.id === propertyId);
 
-  // Die ersten Konditionen gelten immer ab Mietbeginn.
-  useEffect(() => { setTerms((ts) => ts.map((t, i) => (i === 0 ? { ...t, valid_from: f.contract_start } : t))); }, [f.contract_start]);
+  // Die ersten Konditionen gelten immer ab Mietbeginn. Der Einzug folgt dem Mietbeginn, solange er nicht abweichend eingetragen ist.
+  const lastStart = useRef(f.contract_start);
+  useEffect(() => {
+    setTerms((ts) => ts.map((t, i) => (i === 0 ? { ...t, valid_from: f.contract_start } : t)));
+    const prev = lastStart.current; // vor dem Updater festhalten – er läuft erst beim nächsten Rendern
+    setF((cur) => (cur.move_in === prev || !cur.move_in ? { ...cur, move_in: cur.contract_start } : cur));
+    lastStart.current = f.contract_start;
+  }, [f.contract_start]);
 
   const set = (k: keyof typeof f) => (e: any) => setF({ ...f, [k]: e.target.value });
   const setParty = (i: number, k: keyof Party, v: string) => setParties(parties.map((p, j) => (j === i ? { ...p, [k]: v } : p)));
@@ -124,6 +135,13 @@ export function TenancyForm({ meta, initial, onSaved, onCancel }: { meta: Meta; 
           <label>Tatsächlicher Auszug<input type="date" value={f.move_out} onChange={set("move_out")} /></label>
         </div>
         <p className="hint">Für die Abrechnung zählt die Vertragslaufzeit. Ein- und Auszug werden für Zwischenablesungen festgehalten.</p>
+        {initial.predecessor_end && f.contract_start && (() => {
+          const gapFrom = nextDay(initial.predecessor_end);
+          if (f.contract_start < gapFrom) return <p className="notice error small">Beginnt vor dem Ende des bisherigen Mietverhältnisses ({date(initial.predecessor_end)}).</p>;
+          if (f.contract_start === gapFrom) return <p className="notice ok small">Nahtloser Wechsel – kein Leerstand.</p>;
+          const d = Math.round((Date.parse(f.contract_start) - Date.parse(gapFrom)) / 86400000);
+          return <p className="notice warn small">Leerstand {date(gapFrom)} – {date(prevDay(f.contract_start))} ({d} Tage) wird automatisch ausgewiesen; der Kostenanteil trägt der Vermieter.</p>;
+        })()}
       </fieldset>
 
       <fieldset className="form-block">
@@ -281,7 +299,16 @@ export function TenancyPage({ id }: { id: number }) {
               <button className="secondary" onClick={() => { setEndDate(""); setMoveOut(""); setMode("end"); }}>Beenden / Mieterwechsel</button>
             </div>
           )}
-          {end && t.status !== "kuenftig" && <button className="link" onClick={() => setMode("successor")}>Nachmieter ab {date(nextDay(end))} anlegen</button>}
+          {end && !t.next && <button className="link" onClick={() => setMode("successor")}>Nachmieter anlegen</button>}
+          {(t.previous || t.next) && (
+            <ul className="chain">
+              {t.previous && <li><span className="muted">Vormieter</span> <a href={`#/mieter/${t.previous.id}`}>{t.previous.names}</a> <span className="muted">bis {date(t.previous.end)}</span></li>}
+              {t.vacancy_before && <li className="vacancy"><span>Leerstand</span> {date(t.vacancy_before.from)} – {date(t.vacancy_before.to)} · {t.vacancy_before.days} Tage</li>}
+              <li className="self"><strong>{t.names}</strong> <span className="muted">{date(t.contract_start)} – {end ? date(end) : "unbefristet"}</span></li>
+              {t.vacancy_after && <li className="vacancy"><span>Leerstand</span> {date(t.vacancy_after.from)} – {date(t.vacancy_after.to)} · {t.vacancy_after.days} Tage</li>}
+              {t.next && <li><span className="muted">Nachmieter</span> <a href={`#/mieter/${t.next.id}`}>{t.next.names}</a> <span className="muted">ab {date(t.next.start)}</span></li>}
+            </ul>
+          )}
 
           <h3>Vertragspartner</h3>
           <ul className="plain-list">
@@ -328,7 +355,7 @@ export function TenancyPage({ id }: { id: number }) {
       </Sheet>
       <Sheet open={mode === "successor"} onClose={() => setMode((cur) => (cur === "successor" ? "" : cur))} title="Nachmieter anlegen" wide>
         {mode === "successor" && meta && end && (
-          <TenancyForm meta={meta} initial={{ property_id: t.property_id, unit_id: t.unit_id, contract_start: nextDay(end), move_in: nextDay(end) }}
+          <TenancyForm meta={meta} initial={{ property_id: t.property_id, unit_id: t.unit_id, contract_start: nextDay(end), move_in: nextDay(end), predecessor_end: end }}
             onCancel={() => setMode("")} onSaved={(n) => { setMode(""); go(`/mieter/${n.id}`); }} />
         )}
       </Sheet>

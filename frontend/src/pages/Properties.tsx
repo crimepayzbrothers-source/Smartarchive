@@ -4,6 +4,9 @@ import { go, useLoad, useMeta, useToast } from "../lib";
 import { BackButton, Empty, ErrorBox, Icon, Loading, Sheet } from "../components/ui";
 import { OccupancyPanel } from "./Tenants";
 
+// Bezeichnungen der Wohnungen (Hauptstraße 15); weitere über das Eingabefeld.
+const UNIT_PRESETS = ["EG", "OG links", "OG Mitte", "OG rechts", "Galerie"];
+
 const EMPTY = { name: "", address: "", kind: "Eigentumswohnung", living_area: "", ownership_share: "", rental_status: "vermietet",
   acquired_on: "", acquisition_cost: "", keywords: "", notes: "" };
 
@@ -128,9 +131,10 @@ export function PropertyPage({ id }: { id: number }) {
       toast({ kind: "error", text: e.message });
     }
   };
-  const addUnit = async () => {
-    if (!unitName.trim()) return;
-    await post(`/api/properties/${id}/units`, { name: unitName.trim() });
+  const addUnit = async (name?: string) => {
+    const n = (name ?? unitName).trim();
+    if (!n) return;
+    await post(`/api/properties/${id}/units`, { name: n });
     setUnitName("");
     reloadMeta();
     reload();
@@ -195,8 +199,16 @@ export function PropertyPage({ id }: { id: number }) {
           </ul>
           <div className="inline-add">
             <input value={unitName} onChange={(e) => setUnitName(e.target.value)} placeholder="z. B. Wohnung EG links" onKeyDown={(e) => e.key === "Enter" && addUnit()} />
-            <button className="secondary" onClick={addUnit}>Hinzufügen</button>
+            <button className="secondary" onClick={() => addUnit()}>Hinzufügen</button>
           </div>
+          {UNIT_PRESETS.some((n) => !p.units.some((u: any) => u.name.toLowerCase() === n.toLowerCase())) && (
+            <div className="unit-presets">
+              <span className="muted">Schnell anlegen:</span>
+              {UNIT_PRESETS.filter((n) => !p.units.some((u: any) => u.name.toLowerCase() === n.toLowerCase())).map((n) => (
+                <button key={n} className="choice small" onClick={() => addUnit(n)}><Icon name="plus" size={14} /> {n}</button>
+              ))}
+            </div>
+          )}
         </section>
 
         <section className="panel">
@@ -213,7 +225,7 @@ export function PropertyPage({ id }: { id: number }) {
           </ul>
         </section>
       </div>
-      <OccupancyPanel propertyId={id} />
+      <OccupancyPanel key={p.units.map((u: any) => `${u.id}:${u.living_area ?? ""}`).join(",")} propertyId={id} />
       <button className="danger-link" onClick={archive}><Icon name="archive" size={18} /> Objekt archivieren</button>
 
       <Sheet open={editing} onClose={() => setEditing(false)} title="Objekt bearbeiten">

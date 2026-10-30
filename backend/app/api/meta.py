@@ -23,7 +23,7 @@ async def meta(request: Request, conn, user):
         c["count"] = counts.get(c["id"], 0)
         c["ai_enabled"] = bool(c["ai_enabled"])
     props = rows(conn.execute("SELECT * FROM properties WHERE archived = 0 ORDER BY name"))
-    units = rows(conn.execute("SELECT * FROM units ORDER BY name"))
+    units = rows(conn.execute("SELECT * FROM units ORDER BY id"))
     for p in props:
         p["units"] = [u for u in units if u["property_id"] == p["id"]]
     return {
