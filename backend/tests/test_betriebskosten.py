@@ -77,6 +77,11 @@ def test_mandatory_cases(client):
     _cost(client, period, "wasser", 60000, "Wasser 2026")
     _put(client, period, "keys/wasser", {"key": "verbrauch", "reason": "Wasserzähler in jeder Wohnung"})
     _cost(client, period, "beleuchtung", 10000, "Allgemeinstrom")
+    # Standardtext eines anderen Schlüssels darf nicht als Begründung mitwandern
+    from app.betriebskosten import KEYS
+    data = _put(client, period, "keys/beleuchtung", {"key": "personen", "reason": KEYS["flaeche"]["why"]})
+    assert next(l for l in data["lines"] if l["cost_type"] == "beleuchtung")["key_reason"] == KEYS["personen"]["why"]
+    assert data["keys"]["beleuchtung"]["reason"] == "" and data["keys"]["grundsteuer"]["reason"] == ""
     _put(client, period, "keys/beleuchtung", {"key": "personen", "reason": "Laut Mietvertrag nach Personen"})
     _cost(client, period, "heizung", 300000, "Heizkosten laut ista")                   # Abrechnung der Ablesefirma
     seg = {"A": (units["EG"], t["A"]), "B": (units["EG"], t["B"]), "C": (units["OG"], t["C"]), "D": (units["DG"], t["D"]),

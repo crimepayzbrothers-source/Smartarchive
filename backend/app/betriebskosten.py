@@ -160,11 +160,12 @@ def touch(conn: sqlite3.Connection, period_id: int) -> None:
 
 
 def key_for(conn: sqlite3.Connection, period_id: int, cost_type: str) -> tuple[str | None, str]:
+    """Schlüssel und eigene Begründung. Ohne eigene Begründung ist sie leer; die Erläuterung des Schlüssels
+    (KEYS[...]["why"]) wird erst bei der Berechnung ergänzt, damit sie beim Wechsel des Schlüssels nicht mitwandert."""
     r = row(conn.execute("SELECT key, reason FROM bk_keys WHERE period_id = ? AND cost_type = ?", (period_id, cost_type)))
     if r:
         return r["key"], r["reason"]
-    k = COST_TYPES[cost_type]["key"]
-    return k, (KEYS[k]["why"] if k else "")
+    return COST_TYPES[cost_type]["key"], ""
 
 
 # --- Kosten übernehmen ---------------------------------------------------------------
@@ -514,7 +515,7 @@ def _basis_text(line: dict[str, Any], my_segs: list[dict], tks: set[str], t: dic
         days_ = sum(s["days"] for s in my_segs)
         return {"mine": f"nur Ihre Wohnung, {days_} Tage", "total": "Kosten der Wohnung", "mine_units": str(days_), "total_units": ""}
     if key == "extern":
-        return {"mine": "laut Heizkostenabrechnung der Ablesefirma (Anlage)", "total": "Gesamtkosten laut Ablesefirma",
+        return {"mine": "laut Ablesefirma (Anlage)", "total": "laut Ablesefirma",
                 "mine_units": "", "total_units": ""}
     return {"mine": "", "total": "", "mine_units": "", "total_units": ""}
 

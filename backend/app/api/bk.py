@@ -184,8 +184,11 @@ async def set_key(request: Request, conn, user):
     _period_or_404(conn, period_id)
 
     def go():
+        reason = data.reason.strip()
+        if any(reason == k["why"] for k in bk.KEYS.values()):
+            reason = ""  # Standarderläuterung nicht als eigene Begründung speichern
         conn.execute("INSERT INTO bk_keys(period_id, cost_type, key, reason) VALUES(?,?,?,?) ON CONFLICT(period_id, cost_type) "
-                     "DO UPDATE SET key = excluded.key, reason = excluded.reason", (period_id, ct, data.key, data.reason.strip()))
+                     "DO UPDATE SET key = excluded.key, reason = excluded.reason", (period_id, ct, data.key, reason))
         bk.touch(conn, period_id)
         audit(conn, "key_set", "bk_period", period_id, {"cost_type": ct, "key": data.key})
     _run(conn, go)
