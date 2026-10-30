@@ -38,7 +38,7 @@ function toTerm(t: any): Term {
     hk: centsToInput(t.hk_advance_cents), persons: t.persons ?? "", note: t.note || "" };
 }
 
-export function TenancyForm({ meta, initial, onSaved, onCancel, notice }: { meta: Meta; initial: any; onSaved: (t: any) => void; onCancel?: () => void; notice?: ReactNode }) {
+export function TenancyForm({ meta, initial, onSaved, onCancel, notice, initialFiles = [] }: { meta: Meta; initial: any; onSaved: (t: any) => void; onCancel?: () => void; notice?: ReactNode; initialFiles?: File[] }) {
   const toast = useToast();
   const editing = Boolean(initial.id);
   const [propertyId, setPropertyId] = useState<number | null>(initial.property_id ?? meta.properties[0]?.id ?? null);
@@ -52,6 +52,44 @@ export function TenancyForm({ meta, initial, onSaved, onCancel, notice }: { meta
     : [{ valid_from: initial.contract_start || "", cold_rent: "", bk: "", hk: "", persons: "", note: "" }]);
   const [busy, setBusy] = useState(false);
   const prop = meta.properties.find((p) => p.id === propertyId);
+  const [docs, setDocs] = useState<File[]>(initialFiles);
+  const [reading, setReading] = useState(false);
+  const [readInfo, setReadInfo] = useState<string | null>(null);
+
+  // Angaben aus den Unterlagen auslesen: füllt nur leere Felder, überschreibt nichts, was Sie eingetragen haben.
+  const readDocs = async () => {
+    if (!propertyId || !docs.length) return;
+    const form = new FormData();
+    form.append("property_id", String(propertyId));
+    docs.forEach((d) => form.append("files", d, d.name));
+    setReading(true);
+    setReadInfo(null);
+    try {
+      const res = await fetch("/api/tenancies/extract", { method: "POST", body: form, headers: { "X-Requested-With": "SmartArchive" }, credentials: "same-origin" });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.error || `Fehler ${res.status}`);
+      const r = data.results?.[0] || {};
+      const filled: string[] = [];
+      // Aus dem aktuellen Stand berechnen (nicht in Updatern), damit die Rückmeldung vollständig ist
+      if (!unitId && r.unit_id) { setUnitId(r.unit_id); filled.push("Wohnung"); }
+      const nf = { ...f };
+      for (const k of ["contract_start", "contract_end", "move_out"] as const) if (!nf[k] && r[k]) { nf[k] = r[k]; filled.push(FIELD_LABEL[k]); }
+      if (!nf.move_in && (r.move_in || r.contract_start)) nf.move_in = r.move_in || r.contract_start;
+      setF(nf);
+      if (!parties.some((p) => p.last_name.trim()) && r.parties?.length) { setParties(r.parties.map((p: any) => ({ ...EMPTY_PARTY, ...p }))); filled.push("Vertragspartner"); }
+      const t0 = { ...terms[0] };
+      if (!t0.cold_rent && r.cold_rent_cents != null) { t0.cold_rent = centsToInput(r.cold_rent_cents); filled.push("Kaltmiete"); }
+      if (!t0.bk && r.bk_advance_cents != null) { t0.bk = centsToInput(r.bk_advance_cents); filled.push("Betriebskosten-VZ"); }
+      if (!t0.hk && r.hk_advance_cents != null) { t0.hk = centsToInput(r.hk_advance_cents); filled.push("Heizkosten-VZ"); }
+      if (String(t0.persons ?? "") === "" && r.persons != null) { t0.persons = String(r.persons); filled.push("Personen"); }
+      setTerms([t0, ...terms.slice(1)]);
+      setReadInfo(filled.length ? `Übernommen: ${[...new Set(filled)].join(", ")} – bitte prüfen.` : "Keine zusätzlichen Angaben gefunden.");
+    } catch (ex: any) {
+      setReadInfo(`Auslesen nicht möglich: ${ex.message}`);
+    } finally {
+      setReading(false);
+    }
+  };
 
   // Die ersten Konditionen gelten immer ab Mietbeginn. Der Einzug folgt dem Mietbeginn, solange er nicht abweichend eingetragen ist.
   const lastStart = useRef(f.contract_start);
@@ -90,7 +128,13 @@ export function TenancyForm({ meta, initial, onSaved, onCancel, notice }: { meta
     setBusy(true);
     try {
       const saved = editing ? await put(`/api/tenancies/${initial.id}`, body) : await post("/api/tenancies", body);
-      toast({ kind: "ok", text: "Mietverhältnis gespeichert." });
+      if (docs.length) {
+        const up = await uploadTenancyFiles(saved.id, docs);
+        toast(up.ok ? { kind: "ok", text: `Mietverhältnis gespeichert, ${up.count} Unterlage(n) archiviert.` }
+          : { kind: "error", text: `Mietverhältnis gespeichert, Unterlagen aber nicht: ${up.error}` });
+      } else {
+        toast({ kind: "ok", text: "Mietverhältnis gespeichert." });
+      }
       onSaved(saved);
     } catch (ex: any) {
       fail(ex.message);
@@ -124,6 +168,18 @@ export function TenancyForm({ meta, initial, onSaved, onCancel, notice }: { meta
               Wohnungen legen Sie auf der <a href={`#/objekt/${prop.id}`}>Objektseite</a> unter „Einheiten“ an.</p>
           )}
         </div>
+      </fieldset>
+
+      <fieldset className="form-block">
+        <legend>Unterlagen (Vertrag, Screenshots, Fotos)</legend>
+        <FileCollector files={docs} onChange={(fs) => { setDocs(fs); setReadInfo(null); }} />
+        {docs.length > 0 && (
+          <div className="row-actions">
+            <button type="button" className="secondary" disabled={reading || !propertyId} onClick={readDocs}>{reading ? "Wird ausgelesen …" : "Angaben aus Unterlagen auslesen"}</button>
+          </div>
+        )}
+        {readInfo && <p className="hint">{readInfo}</p>}
+        <p className="hint">Die Dateien werden beim Speichern im Archiv (Vermietung) abgelegt und diesem Mietverhältnis zugeordnet. Auslesen füllt nur leere Felder.</p>
       </fieldset>
 
       <fieldset className="form-block">
@@ -364,6 +420,7 @@ export function TenancyPage({ id }: { id: number }) {
           {t.notes && <><h3>Notizen</h3><p className="notes">{t.notes}</p></>}
         </section>
       </div>
+      <TenancyDocuments t={t} onChanged={reload} />
       <button className="danger-link" onClick={remove}><Icon name="trash" size={18} /> Versehentlich angelegt? Löschen</button>
 
       <Sheet open={mode === "edit"} onClose={() => setMode((cur) => (cur === "edit" ? "" : cur))} title="Mietverhältnis bearbeiten" wide>
@@ -466,20 +523,14 @@ export function TenancyImport({ meta, propertyId, onDone, onCancel }: { meta: Me
   const [pid, setPid] = useState<number>(propertyId ?? meta.properties[0]?.id);
   const [files, setFiles] = useState<File[]>([]);
   const [useAi, setUseAi] = useState(false);
-  const [archive, setArchive] = useState(false);
+  const [archive, setArchive] = useState(true);
   const [busy, setBusy] = useState(false);
   const [res, setRes] = useState<any>(null);
   const [chosen, setChosen] = useState<any>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
   const prop = meta.properties.find((p) => p.id === pid);
   const unitName = (id: number | null) => prop?.units.find((u) => u.id === id)?.name;
-
-  const pick = (list: FileList | null) => {
-    const fs = Array.from(list || []);
-    setFiles(fs);
-    setRes(null);
-    setArchive(fs.some((f) => f.type === "application/pdf"));
-  };
+  const totalMb = files.reduce((a, f) => a + f.size, 0) / 1024 / 1024;
+  const setCollected = (fs: File[]) => { setFiles(fs); setRes(null); };
   const read = async () => {
     const form = new FormData();
     form.append("property_id", String(pid));
@@ -498,16 +549,6 @@ export function TenancyImport({ meta, propertyId, onDone, onCancel }: { meta: Me
       setBusy(false);
     }
   };
-  const archiveFiles = async () => {
-    const form = new FormData();
-    form.append("area", "vermietung");
-    form.append("property_id", String(pid));
-    form.append("combine", files.length > 1 && files.every((f) => f.type.startsWith("image/")) ? "1" : "0");
-    files.forEach((f) => form.append("files", f, f.name));
-    const r = await fetch("/api/upload", { method: "POST", body: form, headers: { "X-Requested-With": "SmartArchive" }, credentials: "same-origin" });
-    if (!r.ok) toast({ kind: "error", text: "Mietvertrag konnte nicht im Archiv abgelegt werden." });
-  };
-
   if (chosen) {
     const r = chosen;
     const start = r.contract_start || "";
@@ -528,7 +569,7 @@ export function TenancyImport({ meta, propertyId, onDone, onCancel }: { meta: Me
       </div>
     );
     return <TenancyForm meta={meta} initial={initial} notice={notice} onCancel={() => setChosen(null)}
-      onSaved={async (t) => { if (archive) await archiveFiles(); onDone(t); }} />;
+      initialFiles={archive ? files : []} onSaved={onDone} />;
   }
 
   return (
@@ -537,15 +578,13 @@ export function TenancyImport({ meta, propertyId, onDone, onCancel }: { meta: Me
         erkannte Angaben füllen das Formular vor. Gespeichert wird erst, wenn Sie das Formular bestätigen.</p>
       <label>Mietobjekt<select value={pid} onChange={(e) => { setPid(Number(e.target.value)); setRes(null); }}>
         {meta.properties.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
-      <input ref={fileRef} type="file" accept="application/pdf,image/*" multiple hidden onChange={(e) => pick(e.target.files)} />
-      <button type="button" className="secondary" onClick={() => fileRef.current?.click()}><Icon name="file" size={18} /> {files.length ? `${files.length} Datei(en) gewählt – ändern` : "Dateien wählen"}</button>
-      {files.length > 0 && <ul className="plain-list small-files">{files.map((f) => <li key={f.name + f.size}><span>{f.name}</span><span className="muted">{Math.round(f.size / 1024)} KB</span></li>)}</ul>}
+      <FileCollector files={files} onChange={setCollected} />
       {meta.ai_available && (
         <label className="check"><input type="checkbox" checked={useAi} onChange={(e) => setUseAi(e.target.checked)} />
           Zusätzlich mit KI auslesen (Mistral, EU). Dabei wird der erkannte Text mit Namen und Beträgen übermittelt; erkennt auch Mieterlisten.</label>
       )}
-      <label className="check"><input type="checkbox" checked={archive} onChange={(e) => setArchive(e.target.checked)} /> Dateien als Mietvertrag im Archiv ablegen (beim Objekt)</label>
-      <button className="primary" disabled={!files.length || busy} onClick={read}>{busy ? "Wird ausgelesen …" : "Auslesen"}</button>
+      <label className="check"><input type="checkbox" checked={archive} onChange={(e) => setArchive(e.target.checked)} /> Dateien beim Speichern als Unterlagen des Mietverhältnisses archivieren</label>
+      <button className="primary" disabled={!files.length || busy || totalMb > FILE_MAX_MB} onClick={read}>{busy ? "Wird ausgelesen …" : "Auslesen"}</button>
 
       {res && (
         <div className="import-results">
@@ -575,5 +614,117 @@ export function TenancyImport({ meta, propertyId, onDone, onCancel }: { meta: Me
       )}
       <button type="button" className="ghost" onClick={onCancel}>Abbrechen</button>
     </div>
+  );
+}
+
+// --- Dateien sammeln (Verträge, Fotos, Screenshots) ------------------------------------------
+
+export const FILE_MAX = 10;
+export const FILE_MAX_MB = 25;
+
+/** Mehrere Dateien in mehreren Runden sammeln (Galerie, Kamera, PDF); einzeln entfernen und sortieren. */
+export function FileCollector({ files, onChange }: { files: File[]; onChange: (f: File[]) => void }) {
+  const toast = useToast();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const camRef = useRef<HTMLInputElement>(null);
+  const totalMb = files.reduce((a, f) => a + f.size, 0) / 1024 / 1024;
+  const add = (list: FileList | null) => {
+    const incoming = Array.from(list || []);
+    if (!incoming.length) return;
+    const next = [...files];
+    for (const f of incoming) {
+      if (next.some((x) => x.name === f.name && x.size === f.size && x.lastModified === f.lastModified)) continue;
+      next.push(f);
+    }
+    if (next.length > FILE_MAX) toast({ kind: "error", text: `Höchstens ${FILE_MAX} Dateien auf einmal – die ersten ${FILE_MAX} wurden übernommen.` });
+    onChange(next.slice(0, FILE_MAX));
+  };
+  const remove = (i: number) => onChange(files.filter((_, j) => j !== i));
+  const move = (i: number, d: number) => {
+    const j = i + d;
+    if (j < 0 || j >= files.length) return;
+    const next = [...files];
+    [next[i], next[j]] = [next[j], next[i]];
+    onChange(next);
+  };
+  return (
+    <div className="file-collector">
+      <input ref={fileRef} type="file" accept="application/pdf,image/*" multiple hidden onChange={(e) => { add(e.target.files); e.target.value = ""; }} />
+      <input ref={camRef} type="file" accept="image/*" capture="environment" hidden onChange={(e) => { add(e.target.files); e.target.value = ""; }} />
+      <div className="row-actions">
+        <button type="button" className="secondary" onClick={() => fileRef.current?.click()} disabled={files.length >= FILE_MAX}>
+          <Icon name="file" size={18} /> {files.length ? "Weitere Dateien hinzufügen" : "Dateien oder Screenshots wählen"}</button>
+        <button type="button" className="secondary" onClick={() => camRef.current?.click()} disabled={files.length >= FILE_MAX}>
+          <Icon name="camera" size={18} /> {files.length ? "Weiteres Foto" : "Foto aufnehmen"}</button>
+      </div>
+      {files.length > 0 && (
+        <>
+          <ol className="file-list">
+            {files.map((f, i) => (
+              <li key={`${f.name}-${f.size}-${f.lastModified}`}>
+                {f.type.startsWith("image/") ? <img src={URL.createObjectURL(f)} alt="" className="file-thumb" onLoad={(e) => URL.revokeObjectURL((e.target as HTMLImageElement).src)} />
+                  : <span className="file-thumb pdf"><Icon name="file" size={20} /></span>}
+                <span className="file-name">{f.name}<span className="muted sub-line">{f.size < 1048576 ? `${Math.round(f.size / 1024)} KB` : `${(f.size / 1048576).toFixed(1).replace(".", ",")} MB`}</span></span>
+                <span className="file-actions">
+                  <button type="button" className="icon-btn" aria-label="Nach oben" disabled={i === 0} onClick={() => move(i, -1)}>↑</button>
+                  <button type="button" className="icon-btn" aria-label="Nach unten" disabled={i === files.length - 1} onClick={() => move(i, 1)}>↓</button>
+                  <button type="button" className="icon-btn" aria-label={`${f.name} entfernen`} onClick={() => remove(i)}><Icon name="trash" size={16} /></button>
+                </span>
+              </li>
+            ))}
+          </ol>
+          <p className={`hint ${totalMb > FILE_MAX_MB ? "warn-text" : ""}`}>{files.length} von höchstens {FILE_MAX} Dateien · {totalMb.toFixed(1).replace(".", ",")} von {FILE_MAX_MB} MB.</p>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** Unterlagen in den Archivbereich Vermietung hochladen und dem Mietverhältnis zuordnen. */
+export async function uploadTenancyFiles(tenancyId: number, files: File[]): Promise<{ ok: boolean; count: number; error?: string }> {
+  if (!files.length) return { ok: true, count: 0 };
+  const form = new FormData();
+  form.append("area", "vermietung");
+  form.append("tenancy_id", String(tenancyId));
+  form.append("combine", "0");
+  files.forEach((f) => form.append("files", f, f.name));
+  try {
+    const r = await fetch("/api/upload", { method: "POST", body: form, headers: { "X-Requested-With": "SmartArchive" }, credentials: "same-origin" });
+    const d = await r.json().catch(() => null);
+    if (!r.ok) return { ok: false, count: 0, error: d?.error || `Fehler ${r.status}` };
+    return { ok: true, count: (d.created?.length || 0) + (d.duplicates?.length || 0) };
+  } catch {
+    return { ok: false, count: 0, error: "Keine Verbindung zum Server." };
+  }
+}
+
+/** Unterlagen auf der Seite eines Mietverhältnisses: Liste und weitere hinzufügen. */
+export function TenancyDocuments({ t, onChanged }: { t: any; onChanged: () => void }) {
+  const toast = useToast();
+  const [files, setFiles] = useState<File[]>([]);
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    setBusy(true);
+    const r = await uploadTenancyFiles(t.id, files);
+    setBusy(false);
+    if (!r.ok) return toast({ kind: "error", text: `Unterlagen nicht gespeichert: ${r.error}` });
+    toast({ kind: "ok", text: `${r.count} Unterlage(n) archiviert.` });
+    setFiles([]);
+    onChanged();
+  };
+  return (
+    <section className="panel">
+      <h2>Unterlagen</h2>
+      {t.documents?.length ? (
+        <ul className="plain-list">
+          {t.documents.map((d: any) => (
+            <li key={d.id}><a href={`#/dokument/${d.id}`}>{d.title || "Dokument"}</a>
+              <span className="muted">{d.status === "processing" ? "wird verarbeitet" : date(d.doc_date || d.created_at)}</span></li>
+          ))}
+        </ul>
+      ) : <p className="muted">Noch keine Unterlagen – z. B. Mietvertrag, Übergabeprotokoll, Screenshots.</p>}
+      <FileCollector files={files} onChange={setFiles} />
+      {files.length > 0 && <button className="primary" disabled={busy} onClick={save}>{busy ? "Wird hochgeladen …" : `${files.length} Datei(en) archivieren`}</button>}
+    </section>
   );
 }

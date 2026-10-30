@@ -119,3 +119,23 @@ def test_extract_endpoint_pdf_and_screenshot(client):
     assert client.get("/api/tenancies").json() == []
     assert client.post("/api/tenancies/extract", data={"property_id": str(pid)}, files=[("files", ("x.txt", b"hallo", "text/plain"))],
                        headers=HEADERS).status_code == 400
+
+
+def test_upload_documents_to_tenancy(client):
+    from conftest import make_pdf, run_worker
+    pid = _pid(client)
+    uid = client.get(f"/api/properties/{pid}").json()["units"][2]["id"]
+    t = client.post("/api/tenancies", json={"property_id": pid, "unit_id": uid, "contract_start": "2021-05-01",
+                                            "parties": [{"first_name": "Max", "last_name": "Mustermann"}],
+                                            "terms": [{"valid_from": "2021-05-01", "cold_rent_cents": 42000}]}, headers=HEADERS).json()
+    files = [("files", ("vertrag.pdf", make_pdf(["Wohnraummietvertrag Hauptstrasse 15", "Mieter Max Mustermann"]), "application/pdf")),
+             ("files", ("uebergabe.pdf", make_pdf(["Uebergabeprotokoll", "Zaehlerstand Wasser 123"]), "application/pdf"))]
+    r = client.post("/api/upload", data={"tenancy_id": str(t["id"]), "area": "auto"}, files=files, headers=HEADERS)
+    assert r.status_code == 200, r.text
+    assert len(r.json()["created"]) == 2 and r.json()["tenancy_id"] == t["id"]
+    run_worker()
+    docs = client.get(f"/api/tenancies/{t['id']}").json()["documents"]
+    assert len(docs) == 2
+    d = client.get(f"/api/documents/{docs[0]['id']}").json()
+    assert d["property_id"] == pid and d["unit_id"] == uid
+    assert client.post("/api/upload", data={"tenancy_id": "999"}, files=files[:1], headers=HEADERS).status_code == 400

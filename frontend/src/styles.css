@@ -654,3 +654,10 @@ details.collapsible[open] > summary { margin-bottom: .8rem; }
 select.invalid, input.invalid { border-color: var(--danger); box-shadow: 0 0 0 3px var(--danger-soft); }
 .form label.check { flex-direction: row; align-items: flex-start; gap: .55rem; font-weight: 500; color: var(--ink); }
 .form label.check input { margin-top: .2rem; flex: none; width: auto; }
+.file-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .4rem; counter-reset: f; }
+.file-list li { display: flex; align-items: center; gap: .6rem; border: 1px solid var(--line); border-radius: var(--radius); padding: .4rem .5rem; background: var(--surface); }
+.file-thumb { width: 44px; height: 44px; object-fit: cover; border-radius: 6px; flex: none; background: var(--surface-2); display: inline-grid; place-items: center; color: var(--ink-3); }
+.file-name { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: .88rem; }
+.file-actions { display: flex; gap: .1rem; flex: none; }
+.file-actions .icon-btn { min-width: 36px; min-height: 36px; }
+.file-collector { display: flex; flex-direction: column; gap: .6rem; }

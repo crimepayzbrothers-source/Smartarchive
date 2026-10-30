@@ -134,6 +134,9 @@ def load(conn: sqlite3.Connection, tenancy_id: int) -> dict[str, Any]:
     t["status"] = status(t)
     t["current_terms"] = term_at(t["terms"], min(max(date.today(), span(t)[0]), span(t)[1] or date.max))
     t.update(neighbours(conn, t))
+    t["documents"] = rows(conn.execute(
+        "SELECT id, title, doc_type, doc_date, status, created_at FROM documents WHERE tenancy_id = ? AND deleted_at IS NULL "
+        "ORDER BY created_at", (tenancy_id,)))
     return t
 
 

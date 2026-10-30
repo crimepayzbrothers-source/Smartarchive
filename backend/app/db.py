@@ -417,6 +417,11 @@ MIGRATIONS: list[str] = [
         UNIQUE (period_id, version)
     );
     """,
+    # 11 – Unterlagen eines Mietverhältnisses (Vertrag, Screenshots, Übergabeprotokoll …)
+    """
+    ALTER TABLE documents ADD COLUMN tenancy_id INTEGER REFERENCES tenancies(id) ON DELETE SET NULL;
+    CREATE INDEX ix_documents_tenancy ON documents(tenancy_id);
+    """,
 ]
 
 

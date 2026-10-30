@@ -101,6 +101,8 @@ async def upload(request: Request, conn, user):
     prop_raw = str(form.get("property_id") or "")
     property_id = int(prop_raw) if prop_raw.isdigit() else None
     combine = str(form.get("combine") or "") in ("1", "true", "ja")
+    ten_raw = str(form.get("tenancy_id") or "")
+    tenancy_id = int(ten_raw) if ten_raw.isdigit() else None
     uploads: list[tuple[str, bytes]] = []
     for item in form.getlist("files"):
         if not hasattr(item, "read"):
@@ -121,10 +123,26 @@ async def upload(request: Request, conn, user):
     await form.close()
     if not uploads:
         raise ApiError(400, "Keine Datei erhalten.")
+    ten = None
+    if tenancy_id is not None:
+        ten = row(conn.execute("SELECT id, property_id, unit_id FROM tenancies WHERE id = ?", (tenancy_id,)))
+        if not ten:
+            raise ApiError(400, "Das Mietverhältnis existiert nicht.")
+        area, property_id = "vermietung", ten["property_id"]
     try:
         result = await run_in_threadpool(documents.ingest, conn, uploads, area, combine, captures, property_id)
     except documents.IngestError as exc:
         raise ApiError(400, str(exc)) from None
+    if ten:
+        # Unterlagen dem Mietverhältnis zuordnen (auch eine schon archivierte, identische Datei)
+        ids = result["created"] + [d["document_id"] for d in result.get("duplicates", [])]
+        with tx(conn):
+            for doc_id in ids:
+                conn.execute("UPDATE documents SET tenancy_id = ?, unit_id = COALESCE(unit_id, ?) WHERE id = ?",
+                             (ten["id"], ten["unit_id"], doc_id))
+            if ids:
+                audit(conn, "documents_linked", "tenancy", ten["id"], {"documents": ids})
+        result["tenancy_id"] = ten["id"]
     return result
 
 
