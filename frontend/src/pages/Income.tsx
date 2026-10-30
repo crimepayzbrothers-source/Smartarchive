@@ -56,6 +56,7 @@ export default function Income({ params }: { params: URLSearchParams }) {
             <div><span>Überzahlungen</span><strong>{money(data.totals.credit)}</strong></div>
             {data.assume_paid && <div><span>davon angenommen</span><strong>{money(data.totals.assumed)}</strong></div>}
           </div>
+          <IncomeCharts data={data} year={year} />
           {data.open_incoming > 0 && (
             <p className="notice warn"><span>{data.open_incoming} Zahlungseingänge im Mietkonto sind noch nicht zugeordnet.</span>
               <button className="secondary small" onClick={() => go("/eingang")}>Zum Eingang</button></p>
@@ -83,11 +84,83 @@ export default function Income({ params }: { params: URLSearchParams }) {
               ))}
             </div>
           )}
+          <section className="panel export">
+            <h2>Übersicht für das Finanzamt {year}</h2>
+            <p className="muted">PDF mit Zusammenfassung (Kaltmiete, Betriebs- und Heizkostenvorauszahlungen, Mehrbeträge), je Objekt den
+              Mietverhältnissen und einer Monatsübersicht. Eingänge ohne Kontoumsatz oder Barzahlung („angenommen“) sind getrennt ausgewiesen.</p>
+            {data.totals.assumed > 0 && <p className="notice warn block">{money(data.totals.assumed)} sind nur als eingegangen angenommen. Lesen Sie vor dem
+              Versand möglichst die Kontoumsätze bis Jahresende ein, damit die Übersicht auf Zahlungen beruht.</p>}
+            <div className="row-actions">
+              <a className="primary button" href={`/api/export/income.pdf?year=${year}${property ? `&property_id=${property}` : ""}`}>
+                <Icon name="down" size={18} /> PDF herunterladen</a>
+            </div>
+            <p className="hint">Zusammenstellung der erfassten Zahlen, keine steuerliche Berechnung oder Bewertung.</p>
+          </section>
           <p className="hint">Soll aus Kaltmiete und Vorauszahlungen der Mietverhältnisse (bei Ein-/Auszug im Monat anteilig). Ist aus zugeordneten Mieteingängen
             des Mietkontos und von Hand erfassten Zahlungen. Eingänge ab dem 25. zählen für den Folgemonat. Der Saldo läuft innerhalb des Jahres auf.</p>
         </>
       )}
     </div>
+  );
+}
+
+function IncomeCharts({ data, year }: { data: any; year: number }) {
+  if (!data.items.length) return null;
+  const max = Math.max(1, ...data.monthly.map((m: any) => Math.max(m.soll, m.ist)));
+  const parts = [
+    { key: "cold", label: "Kaltmiete" }, { key: "bk", label: "BK-Vorauszahlungen" }, { key: "hk", label: "HK-Vorauszahlungen" },
+    { key: "excess", label: "Mehrbeträge" },
+  ].filter((p) => p.key !== "excess" || data.parts.excess);
+  const maxPart = Math.max(1, ...parts.map((p) => data.parts[p.key]));
+  const byProperty: Record<string, any[]> = {};
+  for (const it of data.items) (byProperty[it.property_name] ||= []).push(it);
+  const maxTenant = Math.max(1, ...data.items.map((i: any) => i.ist));
+  return (
+    <>
+      <section className="panel">
+        <header className="panel-head"><h2>Eingänge je Monat {year}</h2><strong>{money(data.totals.ist)}</strong></header>
+        <div className="month-chart" role="img" aria-label={`Eingänge je Monat ${year}`}>
+          {data.monthly.map((m: any) => {
+            const proven = m.ist - m.assumed;
+            return (
+              <div key={m.month} className="mc-col" title={`${MONTHS[m.month - 1]}: Ist ${money(m.ist)}${m.assumed ? ` (davon angenommen ${money(m.assumed)})` : ""}, Soll ${money(m.soll)}`}>
+                <div className="mc-track">
+                  {m.soll > 0 && <span className="mc-soll" style={{ bottom: `${(m.soll / max) * 100}%` }} />}
+                  <span className="mc-stack" style={{ height: `${(m.ist / max) * 100}%` }}>
+                    <span className="mc-bar proven" style={{ flexGrow: proven }} />
+                    <span className="mc-bar assumed" style={{ flexGrow: m.assumed }} />
+                  </span>
+                </div>
+                <span className="mc-label">{MONTHS[m.month - 1].slice(0, 1)}</span>
+              </div>
+            );
+          })}
+        </div>
+        <p className="chart-legend"><span className="lg proven" /> mit Zahlung<span className="lg assumed" /> angenommen<span className="lg soll" /> Soll</p>
+      </section>
+      <section className="panel">
+        <h2>Zusammensetzung {year}</h2>
+        <ul className="cat-bars">
+          {parts.map((p) => (
+            <li key={p.key}><span className="cat-name">{p.label}</span>
+              <span className="cat-bar"><span style={{ width: `${(data.parts[p.key] / maxPart) * 100}%` }} /></span>
+              <span className="cat-total">{money(data.parts[p.key])}</span></li>
+          ))}
+        </ul>
+      </section>
+      {Object.entries(byProperty).map(([name, items]) => (
+        <section key={name} className="panel">
+          <header className="panel-head"><h2>{name}</h2><strong>{money(items.reduce((a, i) => a + i.ist, 0))}</strong></header>
+          <ul className="cat-bars">
+            {items.map((i) => (
+              <li key={i.tenancy_id}><span className="cat-name">{i.names}{i.unit_name && <span className="muted"> ({i.unit_name})</span>}</span>
+                <span className="cat-bar"><span style={{ width: `${(i.ist / maxTenant) * 100}%` }} /></span>
+                <span className="cat-total">{money(i.ist)}</span></li>
+            ))}
+          </ul>
+        </section>
+      ))}
+    </>
   );
 }
 

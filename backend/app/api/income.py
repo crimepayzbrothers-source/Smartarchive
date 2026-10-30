@@ -7,8 +7,11 @@ from pydantic import BaseModel, Field
 from starlette.requests import Request
 from starlette.routing import Route
 
-from .. import income
-from ..db import audit, now, row, set_setting, tx
+from starlette.concurrency import run_in_threadpool
+from starlette.responses import Response
+
+from .. import income, income_pdf
+from ..db import audit, get_setting, now, row, set_setting, tx
 from .common import ApiError, body, endpoint, int_param, path_int
 
 DATE_RE = r"^\d{4}-\d{2}-\d{2}$"
@@ -99,7 +102,26 @@ async def settings(request: Request, conn, user):
     return {"assume_paid": data.assume_paid}
 
 
+@endpoint()
+async def export_pdf(request: Request, conn, user):
+    """Einnahmenübersicht als PDF (z. B. für das Finanzamt)."""
+    year = int_param(request, "year") or date.today().year
+    prop = int_param(request, "property_id")
+    scope = "Alle Objekte"
+    if prop:
+        p = row(conn.execute("SELECT name FROM properties WHERE id = ?", (prop,)))
+        if not p:
+            raise KeyError(prop)
+        scope = p["name"]
+    ov = income.overview(conn, year, prop)
+    data = await run_in_threadpool(income_pdf.render, ov, get_setting(conn, "landlord", {}) or {}, scope)
+    audit(conn, "exported", "income", None, {"format": "pdf", "year": year, "property_id": prop})
+    name = f"Einnahmen_Vermietung_{year}" + (f"_Objekt{prop}" if prop else "")
+    return Response(data, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{name}.pdf"'})
+
+
 routes = [
+    Route("/api/export/income.pdf", export_pdf, methods=["GET"]),
     Route("/api/income/exceptions", set_exception, methods=["PUT"]),
     Route("/api/income/exceptions/{id:int}", delete_exception, methods=["DELETE"]),
     Route("/api/income/settings", settings, methods=["PUT"]),

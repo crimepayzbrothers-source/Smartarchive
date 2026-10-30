@@ -122,6 +122,25 @@ def payments(conn: sqlite3.Connection, tenancy_id: int) -> list[dict[str, Any]]:
     return sorted(out, key=lambda p: p["date"])
 
 
+def split_parts(ist: int, soll: dict[str, int]) -> dict[str, int]:
+    """Eingang eines Monats auf Kaltmiete, BK- und HK-Vorauszahlung aufteilen (anteilig nach Soll, Rest als Mehrbetrag).
+
+    Reine Arithmetik für die Übersicht: Teilzahlungen werden im Verhältnis der Sollbeträge aufgeteilt
+    (Restcent nach dem größten Rest), was über das Soll hinausgeht, ist „Mehrbetrag“ (z. B. Nachzahlung).
+    """
+    keys = ("cold", "bk", "hk")
+    total = sum(soll[k] for k in keys)
+    if total <= 0 or ist <= 0:
+        return {"cold": 0, "bk": 0, "hk": 0, "excess": ist}
+    base = min(ist, total)
+    exact = {k: Fraction(soll[k] * base, total) for k in keys}
+    out = {k: int(exact[k]) for k in keys}
+    for k in sorted(keys, key=lambda k: exact[k] - out[k], reverse=True)[: base - sum(out.values())]:
+        out[k] += 1
+    out["excess"] = ist - base
+    return out
+
+
 def month_rows(conn: sqlite3.Connection, t: dict[str, Any], year: int, today: date, assume: bool,
                bank_until: date | None) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Soll/Ist je Monat eines Mietverhältnisses (Grundlage für Einnahmen und Mahnungen)."""
@@ -160,7 +179,7 @@ def month_rows(conn: sqlite3.Connection, t: dict[str, Any], year: int, today: da
             st = "teilweise"
         else:
             st = "offen"
-        months.append({"month": m, "soll": soll, "ist": ist, "saldo": cum_ist - cum_soll, "status": st, "assumed": assumed,
+        months.append({"month": m, "soll": soll, "ist": ist, "ist_parts": split_parts(ist, soll), "saldo": cum_ist - cum_soll, "status": st, "assumed": assumed,
                        "bank_missing": bool(bank_missing), "exception": ex and {"id": ex["id"], "paid_cents": ex["paid_cents"], "note": ex["note"]}})
     return months, pays
 
@@ -194,6 +213,7 @@ def overview(conn: sqlite3.Connection, year: int, property_id: int | None = None
             "soll_parts": {k: sum(x["soll"][k] for x in months) for k in ("cold", "bk", "hk")},
             "ist": ist_total, "balance": balance, "arrears": max(0, -balance), "credit": max(0, balance),
             "assumed": sum(x["ist"] for x in months if x["assumed"]),
+            "ist_parts": {k: sum(x["ist_parts"][k] for x in months) for k in ("cold", "bk", "hk", "excess")},
             "bank_missing": [x["month"] for x in months if x["bank_missing"]],
         })
     items.sort(key=lambda x: (x["property_name"], x["unit_id"] or 0, x["contract_start"]))
@@ -207,4 +227,8 @@ def overview(conn: sqlite3.Connection, year: int, property_id: int | None = None
         "year": year, "items": items, "unassigned": unassigned, "open_incoming": open_in, "assume_paid": assume,
         "bank_until": last,
         "totals": {k: sum(i[k] for i in items) for k in ("soll_year", "soll_due", "ist", "arrears", "credit", "assumed")},
+        "parts": {k: sum(i["ist_parts"][k] for i in items) for k in ("cold", "bk", "hk", "excess")},
+        "monthly": [{"month": m, "soll": sum(i["months"][m - 1]["soll"]["total"] for i in items),
+                     "ist": sum(i["months"][m - 1]["ist"] for i in items),
+                     "assumed": sum(i["months"][m - 1]["ist"] for i in items if i["months"][m - 1]["assumed"])} for m in range(1, 13)],
     }

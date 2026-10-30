@@ -758,3 +758,19 @@ select.invalid, input.invalid { border-color: var(--danger); box-shadow: 0 0 0 3
 .rent-summary .hint { margin: .4rem 0 0; }
 .rent-parts { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0 .6rem; }
 .rent-parts span { white-space: nowrap; }
+
+/* Einnahmen: Monatsdiagramm */
+.month-chart { display: grid; grid-template-columns: repeat(12, 1fr); gap: 4px; height: 150px; align-items: end; margin-top: .3rem; }
+.mc-col { display: flex; flex-direction: column; align-items: center; height: 100%; gap: 3px; }
+.mc-track { position: relative; flex: 1; width: 100%; max-width: 30px; display: flex; flex-direction: column; justify-content: flex-end; }
+.mc-stack { display: flex; flex-direction: column-reverse; border-radius: 3px 3px 0 0; overflow: hidden; }
+.mc-bar { display: block; width: 100%; flex-basis: 0; }
+.mc-bar.proven { background: var(--vermietung); }
+.mc-bar.assumed { background: color-mix(in srgb, var(--vermietung) 40%, var(--surface)); }
+.mc-soll { position: absolute; left: -2px; right: -2px; border-top: 2px dashed var(--ink-3); z-index: 1; }
+.mc-label { font-size: .72rem; color: var(--ink-3); }
+.chart-legend { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem .9rem; font-size: .8rem; color: var(--ink-2); margin: .6rem 0 0; }
+.chart-legend .lg { display: inline-block; width: 12px; height: 10px; border-radius: 2px; margin-right: -.55rem; vertical-align: middle; }
+.chart-legend .lg.proven { background: var(--vermietung); }
+.chart-legend .lg.assumed { background: color-mix(in srgb, var(--vermietung) 40%, var(--surface)); }
+.chart-legend .lg.soll { height: 0; border-top: 2px dashed var(--ink-3); border-radius: 0; }
