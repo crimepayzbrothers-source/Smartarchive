@@ -18,7 +18,7 @@ from starlette.responses import FileResponse, JSONResponse, Response
 from starlette.routing import Route
 
 from . import config
-from .api import auth, bank, docs, meta, realestate, tenants
+from .api import auth, bank, bk, docs, meta, realestate, tenants
 from .db import connect, migrate
 from .seed import seed
 
@@ -132,7 +132,7 @@ async def api_not_found(request: Request) -> Response:
 
 routes = [
     Route("/api/health", health),
-    *auth.routes, *docs.routes, *meta.routes, *realestate.routes, *bank.routes, *tenants.routes,
+    *auth.routes, *docs.routes, *meta.routes, *realestate.routes, *bank.routes, *tenants.routes, *bk.routes,
     Route("/api/{rest:path}", api_not_found, methods=["GET", "POST", "PATCH", "DELETE", "PUT"]),
     Route("/share-target", share_fallback, methods=["POST"]),
     Route("/{path:path}", spa, methods=["GET", "HEAD"]),

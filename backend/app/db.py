@@ -348,6 +348,75 @@ MIGRATIONS: list[str] = [
         UNIQUE (tenancy_id, valid_from)
     );
     """,
+    # 10 – Betriebskostenabrechnung: Zeiträume, Kosten, Umlageschlüssel, Werte, Vorauszahlungen (Ist), Fassungen
+    """
+    CREATE TABLE bk_periods (
+        id INTEGER PRIMARY KEY,
+        property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE RESTRICT,
+        start TEXT NOT NULL,
+        end TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'entwurf',
+        vacancy_persons REAL NOT NULL DEFAULT 1,
+        co2 TEXT NOT NULL DEFAULT '{}',
+        acknowledged TEXT NOT NULL DEFAULT '[]',
+        notes TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE (property_id, start)
+    );
+    CREATE TABLE bk_keys (
+        period_id INTEGER NOT NULL REFERENCES bk_periods(id) ON DELETE CASCADE,
+        cost_type TEXT NOT NULL,
+        key TEXT NOT NULL,
+        reason TEXT NOT NULL DEFAULT '',
+        PRIMARY KEY (period_id, cost_type)
+    );
+    CREATE TABLE bk_costs (
+        id INTEGER PRIMARY KEY,
+        period_id INTEGER NOT NULL REFERENCES bk_periods(id) ON DELETE CASCADE,
+        cost_type TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        amount_cents INTEGER NOT NULL,
+        invoice_date TEXT,
+        unit_id INTEGER REFERENCES units(id) ON DELETE SET NULL,
+        document_id INTEGER REFERENCES documents(id) ON DELETE SET NULL,
+        expense_id INTEGER REFERENCES expenses(id) ON DELETE SET NULL,
+        source_category TEXT,
+        origin TEXT NOT NULL DEFAULT 'manuell',
+        created_at TEXT NOT NULL
+    );
+    CREATE UNIQUE INDEX ux_bk_cost_expense ON bk_costs(period_id, expense_id) WHERE expense_id IS NOT NULL;
+    CREATE TABLE bk_values (
+        id INTEGER PRIMARY KEY,
+        period_id INTEGER NOT NULL REFERENCES bk_periods(id) ON DELETE CASCADE,
+        cost_type TEXT NOT NULL,
+        unit_id INTEGER REFERENCES units(id) ON DELETE CASCADE,
+        tenancy_id INTEGER REFERENCES tenancies(id) ON DELETE CASCADE,
+        value REAL,
+        amount_cents INTEGER,
+        estimated INTEGER NOT NULL DEFAULT 0,
+        note TEXT NOT NULL DEFAULT ''
+    );
+    CREATE UNIQUE INDEX ux_bk_value ON bk_values(period_id, cost_type, COALESCE(unit_id, 0), COALESCE(tenancy_id, 0));
+    CREATE TABLE bk_advances (
+        period_id INTEGER NOT NULL REFERENCES bk_periods(id) ON DELETE CASCADE,
+        tenancy_id INTEGER NOT NULL REFERENCES tenancies(id) ON DELETE CASCADE,
+        bk_cents INTEGER NOT NULL DEFAULT 0,
+        hk_cents INTEGER NOT NULL DEFAULT 0,
+        confirmed INTEGER NOT NULL DEFAULT 0,
+        note TEXT NOT NULL DEFAULT '',
+        PRIMARY KEY (period_id, tenancy_id)
+    );
+    CREATE TABLE bk_statements (
+        id INTEGER PRIMARY KEY,
+        period_id INTEGER NOT NULL REFERENCES bk_periods(id) ON DELETE RESTRICT,
+        version INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        note TEXT NOT NULL DEFAULT '',
+        snapshot TEXT NOT NULL,
+        UNIQUE (period_id, version)
+    );
+    """,
 ]
 
 
