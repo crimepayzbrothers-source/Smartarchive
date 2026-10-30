@@ -12,7 +12,7 @@ from starlette.responses import Response
 from starlette.routing import Route
 
 from .. import betriebskosten as bk
-from .. import bk_pdf, documents, storage
+from .. import bk_pdf, bk_receipts, documents, storage
 from ..db import audit, get_setting, now, row, rows, set_setting, tx
 from .common import ApiError, body, endpoint, int_param, path_int
 
@@ -130,6 +130,7 @@ def _full(conn, period_id: int) -> dict:
     result["values"] = rows(conn.execute("SELECT * FROM bk_values WHERE period_id = ?", (period_id,)))
     result["advances"] = rows(conn.execute("SELECT * FROM bk_advances WHERE period_id = ?", (period_id,)))
     result["importable"] = len(bk.importable_expenses(conn, period_id))
+    result["receipts"] = bk_receipts.receipt_status(conn, period_id)
     result["statements"] = rows(conn.execute("SELECT id, version, created_at, note FROM bk_statements WHERE period_id = ? ORDER BY version DESC",
                                              (period_id,)))
     return result
@@ -208,6 +209,7 @@ class CostIn(BaseModel):
 
 
 class CostPatch(BaseModel):
+    verified: bool | None = None
     cost_type: str | None = None
     description: str | None = Field(default=None, max_length=300)
     amount_cents: int | None = None
@@ -259,6 +261,28 @@ async def import_costs(request: Request, conn, user):
 
 
 @endpoint()
+async def receipt_scan(request: Request, conn, user):
+    period_id = path_int(request)
+    _period_or_404(conn, period_id)
+    return await run_in_threadpool(bk_receipts.scan, conn, period_id)
+
+
+class ReceiptImportIn(BaseModel):
+    items: list[dict] = Field(default_factory=list, max_length=200)
+
+
+@endpoint()
+async def receipt_import(request: Request, conn, user):
+    period_id = path_int(request)
+    _period_or_404(conn, period_id)
+    data = await body(request, ReceiptImportIn)
+    n = _run(conn, lambda: bk_receipts.import_positions(conn, period_id, data.items))
+    result = _full(conn, period_id)
+    result["imported"] = n
+    return result
+
+
+@endpoint()
 async def patch_cost(request: Request, conn, user):
     cid = path_int(request)
     c = row(conn.execute("SELECT * FROM bk_costs WHERE id = ?", (cid,)))
@@ -269,6 +293,12 @@ async def patch_cost(request: Request, conn, user):
         raise ApiError(400, "Unbekannte Kostenart.")
     if "amount_cents" in data and not data["amount_cents"]:
         raise ApiError(400, "Betrag fehlt.")
+
+    if "verified" in data:
+        v = data.pop("verified")
+        data["verified_at"] = now() if v else None
+    elif data and c["origin"] != "manuell":
+        data["verified_at"] = now()  # geändert = mit dem Beleg abgeglichen
 
     def go():
         if data:
@@ -518,6 +548,8 @@ routes = [
     Route("/api/bk/periods/{id:int}/importable", importable, methods=["GET"]),
     Route("/api/bk/periods/{id:int}/costs", add_cost, methods=["POST"]),
     Route("/api/bk/periods/{id:int}/costs/import", import_costs, methods=["POST"]),
+    Route("/api/bk/periods/{id:int}/receipt-scan", receipt_scan, methods=["GET"]),
+    Route("/api/bk/periods/{id:int}/receipt-scan/import", receipt_import, methods=["POST"]),
     Route("/api/bk/costs/{id:int}", patch_cost, methods=["PATCH"]),
     Route("/api/bk/costs/{id:int}", delete_cost, methods=["DELETE"]),
     Route("/api/bk/periods/{id:int}/values", set_value, methods=["PUT"]),

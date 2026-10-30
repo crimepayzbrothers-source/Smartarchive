@@ -523,6 +523,13 @@ MIGRATIONS: list[str] = [
     );
     CREATE INDEX idx_deposit_letters ON deposit_letters(tenancy_id);
     """,
+    # 18 – Belegprüfung Betriebskosten: Fundstelle im Beleg und manuelle Prüfung je Kostenposition
+    """
+    ALTER TABLE bk_costs ADD COLUMN evidence TEXT NOT NULL DEFAULT '';
+    ALTER TABLE bk_costs ADD COLUMN verified_at TEXT;
+    UPDATE bk_costs SET verified_at = created_at WHERE origin = 'manuell';
+    UPDATE bk_costs SET verified_at = created_at WHERE origin = 'ausgabe' AND expense_id IN (SELECT id FROM expenses WHERE origin = 'user');
+    """,
 ]
 
 

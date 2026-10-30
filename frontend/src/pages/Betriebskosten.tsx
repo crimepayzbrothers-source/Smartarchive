@@ -248,12 +248,87 @@ function useAction(onChange: (d: any) => void) {
   return { busy, run };
 }
 
+// Belegprüfung: Archivbelege des Objekts per Volltext auswerten (Abgabenbescheide zeilenweise zerlegen)
+function ReceiptScan({ periodId, meta, onClose, onImported }: { periodId: number; meta: BkMeta; onClose: () => void; onImported: (r: any) => void }) {
+  const toast = useToast();
+  const { data, error } = useLoad(() => get<any[]>(`/api/bk/periods/${periodId}/receipt-scan`), [periodId]);
+  const [sel, setSel] = useState<Record<string, any>>({});
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (!data) return;
+    const init: Record<string, any> = {};
+    data.forEach((doc) => doc.positions.forEach((p: any, i: number) => {
+      init[`${doc.document_id}:${i}`] = { on: p.amount_cents != null, cost_type: p.cost_type, amount: p.amount_cents != null ? centsToInput(p.amount_cents) : "" };
+    }));
+    setSel(init);
+  }, [data]);
+  const upd = (k: string, patchv: any) => setSel({ ...sel, [k]: { ...sel[k], ...patchv } });
+  const chosen = data ? data.flatMap((doc) => doc.positions.map((p: any, i: number) => ({ doc, p, k: `${doc.document_id}:${i}` })))
+    .filter((x) => sel[x.k]?.on) : [];
+  const doImport = async () => {
+    const items = chosen.map(({ doc, p, k }) => ({ document_id: doc.document_id, cost_type: sel[k].cost_type, amount_cents: parseMoney(sel[k].amount),
+      evidence: p.evidence }));
+    if (items.some((i) => !i.amount_cents)) return toast({ kind: "error", text: "Bitte für jede ausgewählte Position einen Betrag eintragen." });
+    setBusy(true);
+    try {
+      const r = await post(`/api/bk/periods/${periodId}/receipt-scan/import`, { items });
+      toast({ kind: "ok", text: `${r.imported} Position${r.imported === 1 ? "" : "en"} übernommen – bitte mit dem Beleg abgleichen.` });
+      onImported(r);
+    } catch (e: any) { toast({ kind: "error", text: e.message }); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div className="import-box receipt-scan">
+      <h3>Belegprüfung im Archiv</h3>
+      <p className="hint">Belege dieses Objekts aus dem Bereich Vermietung, die zum Zeitraum gehören und noch nicht übernommen sind. Abgabenbescheide
+        werden per Volltext Zeile für Zeile in Kostenarten zerlegt; jede Position zeigt die Zeile, aus der sie stammt. Rechnungen, die schon als Ausgabe
+        erfasst sind, übernehmen Sie über „Aus Ausgaben übernehmen“.</p>
+      {error && <ErrorBox text={error} />}
+      {!data ? <Loading /> : data.length === 0 ? <p className="muted">Keine weiteren passenden Belege gefunden.</p> : data.map((doc) => (
+        <div key={doc.document_id} className="scan-doc">
+          <div className="scan-doc-head">
+            <span><strong>{doc.correspondent || doc.title}</strong><span className="muted sub-line">{doc.title}{doc.doc_date ? ` · ${date(doc.doc_date)}` : ""} · {doc.why}</span></span>
+            <a className="secondary small btn-link" href={`#/dokument/${doc.document_id}`} target="_blank" rel="noopener">Beleg öffnen</a>
+          </div>
+          {doc.kind === "bescheid" && doc.total != null && (
+            <p className={`small-num ${doc.total_matches ? "pos" : "warn-text"}`}>{doc.total_matches
+              ? `Summe der Positionen = Gesamtbetrag laut Bescheid (${money(doc.total)})`
+              : `Summe der Positionen ${money(doc.sum)} weicht vom erkannten Gesamtbetrag ${money(doc.total)} ab – bitte prüfen`}</p>
+          )}
+          <ul className="plain-list">
+            {doc.positions.map((p: any, i: number) => {
+              const k = `${doc.document_id}:${i}`;
+              const v = sel[k] || {};
+              return (
+                <li key={k} className={`scan-pos ${v.on ? "" : "off"}`}>
+                  <label className="check"><input type="checkbox" checked={!!v.on} onChange={(e) => upd(k, { on: e.target.checked })} aria-label="übernehmen" />
+                    <span className="bk-evidence">„{p.evidence}“{p.note && <span className="muted sub-line">{p.note}</span>}</span></label>
+                  <select value={v.cost_type || p.cost_type} onChange={(e) => upd(k, { cost_type: e.target.value })} aria-label="Kostenart">
+                    {meta.cost_types.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
+                  </select>
+                  <input className="amount" inputMode="decimal" value={v.amount ?? ""} onChange={(e) => upd(k, { amount: e.target.value })} placeholder="Betrag" aria-label="Betrag" />
+                  {p.confidence === "hoch" ? <span className="status-pill bestaetigt">passt zur Summe</span> : <span className="status-pill entwurf">prüfen</span>}
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ))}
+      <div className="row-actions">
+        {data && data.length > 0 && <button className="primary" disabled={busy || !chosen.length} onClick={doImport}>{chosen.length} Position{chosen.length === 1 ? "" : "en"} übernehmen</button>}
+        <button className="ghost" onClick={onClose}>Schließen</button>
+      </div>
+    </div>
+  );
+}
+
 // 1 · Kosten
 function CostsStep({ d, meta, onChange }: { d: any; meta: BkMeta; onChange: (d: any) => void }) {
   const { busy, run } = useAction(onChange);
   const [importing, setImporting] = useState<any[] | null>(null);
   const [choice, setChoice] = useState<Record<number, string>>({});
   const [doomed, setDoomed] = useState<any>(null);
+  const [scanning, setScanning] = useState(false);
   const [form, setForm] = useState({ cost_type: "grundsteuer", description: "", amount: "", invoice_date: "", unit_id: "" });
   const types = meta.cost_types;
   const label = (k: string) => types.find((t) => t.key === k)?.label || k;
@@ -279,9 +354,16 @@ function CostsStep({ d, meta, onChange }: { d: any; meta: BkMeta; onChange: (d: 
 
   return (
     <section className="panel">
-      <header className="panel-head"><h2>Kosten des Hauses</h2>
+      <header className="panel-head"><h2>Kosten des Hauses</h2></header>
+      <div className="row-actions">
+        <button className="secondary" onClick={() => setScanning(true)}><Icon name="search" size={16} /> Belege prüfen</button>
         <button className="secondary" onClick={loadImport}><Icon name="down" size={16} /> Aus Ausgaben übernehmen{d.importable ? ` (${d.importable})` : ""}</button>
-      </header>
+      </div>
+      {d.receipts?.unverified > 0 && (
+        <p className="notice warn block">{d.receipts.unverified} automatisch erfasste Position{d.receipts.unverified === 1 ? "" : "en"} noch ungeprüft:
+          Beleg öffnen, Betrag und Kostenart vergleichen, dann „geprüft“ antippen.</p>
+      )}
+      {scanning && <ReceiptScan periodId={d.period.id} meta={meta} onClose={() => setScanning(false)} onImported={(r) => { onChange(r); setScanning(false); }} />}
       <p className="hint">Erfassen Sie die Gesamtkosten des Hauses für den Zeitraum. Bezahlte Ausgaben des Objekts (Abflussprinzip) können Sie direkt übernehmen;
         Verwaltung, Instandhaltung und Zinsen werden dabei als „nicht umlagefähig“ eingeordnet.</p>
 
@@ -319,7 +401,14 @@ function CostsStep({ d, meta, onChange }: { d: any; meta: BkMeta; onChange: (d: 
                   <li key={c.id} className="swipe-li"><SwipeRow className="cost-item" asking={doomed?.id === c.id} onDelete={() => setDoomed(c)}>
                     <span>{c.description || "ohne Beschreibung"}<span className="muted sub-line">{c.invoice_date ? date(c.invoice_date) : "ohne Datum"}
                       {c.unit_name ? ` · nur ${c.unit_name}` : ""}{c.origin === "ausgabe" ? " · aus Ausgaben" : ""}
-                      {c.document_id ? <> · <a href={`#/dokument/${c.document_id}`}>Beleg</a></> : ""}</span></span>
+                      {c.origin === "beleg" ? " · aus Beleg" : ""}
+                      {c.document_id ? <> · <a href={`#/dokument/${c.document_id}`}>Beleg</a></> : ""}</span>
+                      {c.evidence && <span className="bk-evidence">„{c.evidence}“</span>}
+                      {c.origin !== "manuell" && (c.verified_at
+                        ? <span className="verify done"><Icon name="check" size={14} /> geprüft <button className="link small" onClick={() => run(() => patch(`/api/bk/costs/${c.id}`, { verified: false }))}>zurücksetzen</button></span>
+                        : <span className="verify"><span className="status-pill entwurf">ungeprüft</span>
+                          <button className="secondary small" disabled={busy} onClick={() => run(() => patch(`/api/bk/costs/${c.id}`, { verified: true }), "Als geprüft markiert.")}>geprüft</button></span>)}
+                    </span>
                     <select value={l.cost_type} onChange={(e) => run(() => patch(`/api/bk/costs/${c.id}`, { cost_type: e.target.value }))} aria-label="Kostenart ändern">
                       {types.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
                     </select>

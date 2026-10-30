@@ -782,3 +782,17 @@ select.invalid, input.invalid { border-color: var(--danger); box-shadow: 0 0 0 3
 .deposit-progress span { display: block; height: 100%; background: var(--vermietung); }
 .deposit-pay { margin-top: .5rem; }
 .deposit-letters { border-top: 1px solid var(--line); margin-top: 1rem; padding-top: .3rem; }
+
+/* Belegprüfung Betriebskosten */
+.bk-evidence { display: block; font-size: .8rem; color: var(--ink-2); font-style: italic; overflow-wrap: anywhere; margin-top: .15rem; }
+.verify { display: inline-flex; align-items: center; gap: .4rem; margin-top: .25rem; font-size: .8rem; }
+.verify.done { color: var(--ok); }
+.receipt-scan .scan-doc { border-top: 1px solid var(--line); padding-top: .6rem; margin-top: .6rem; }
+.scan-doc-head { display: flex; justify-content: space-between; gap: .6rem; align-items: flex-start; }
+.scan-pos { flex-wrap: wrap; }
+.scan-pos.off { opacity: .55; }
+.plain-list li.scan-pos > .check { flex: 1 1 100%; align-items: flex-start; margin: .2rem 0; }
+.scan-pos .check > .bk-evidence { flex: 1; min-width: 0; margin: 0; }
+.scan-pos select { flex: 1 1 180px; font-size: .85rem; min-height: 34px; }
+.scan-pos input.amount { flex: 0 1 110px; text-align: right; min-height: 34px; }
+.cost-item > span:first-child .verify .link { font-size: .8rem; }

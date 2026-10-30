@@ -160,3 +160,16 @@ Das Entwurfs-PDF trägt ein Wasserzeichen. Bei der Freigabe wird je Mieter ein P
 - **KI nur auf ausdrücklichen Wunsch:** Sie ist abschaltbar und sichtbar nur mit eingerichtetem Mistral-Schlüssel. Übermittelt wird dabei der erkannte Text mit personenbezogenen Daten. Die KI erkennt auch Mieterlisten mit mehreren Mietverhältnissen.
 - **Speichern erst nach Prüfung:** Das Ergebnis füllt nur das Formular vor. Gespeichert wird erst mit „Mietverhältnis anlegen“.
 - **Archiv:** Auf Wunsch wird der Vertrag beim Objekt archiviert (Vermietung, Upload direkt zum Mietobjekt). Bei PDF ist das voreingestellt, bei Screenshots nicht.
+
+## Belegprüfung (Volltext)
+
+Schritt „Kosten“ → „Belege prüfen“ durchsucht die Belege des Objekts im Bereich Vermietung, die zum Zeitraum gehören
+(Belegdatum im Zeitraum, Jahresangabe im Bescheid oder Dauerbescheid „gilt für Folgejahre“) und noch nicht übernommen sind.
+
+- Abgabenbescheide werden zeilenweise in Kostenarten zerlegt (Grundsteuer, Müll, Schmutz-/Niederschlagswasser, Straßenreinigung,
+  Wasser; wiederkehrende Beiträge/Ausbaubeiträge als „nicht umlagefähig“). Fälligkeiten, Rückstände, Erstattungen werden übergangen.
+- Jede Position zeigt die Belegzeile (Fundstelle); „passt zur Summe“ nur, wenn die Positionen den Gesamtbetrag des Bescheids ergeben.
+- Übernommene Positionen bleiben mit dem Originalbeleg verknüpft (Herkunft „beleg“, Fundstelle gespeichert) und gelten bis zum
+  Antippen von „geprüft“ als ungeprüft; eine Änderung von Betrag oder Kostenart gilt als Prüfung. Die Prüfung meldet ungeprüfte
+  Positionen als Warnung und Positionen ohne Beleg als Hinweis.
+- Ein zerlegter Beleg erscheint nicht mehr unter „Aus Ausgaben übernehmen“; Gesamtbetrag und Zerlegung zugleich werden als Doppelerfassung gemeldet.

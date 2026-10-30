@@ -177,7 +177,8 @@ def importable_expenses(conn: sqlite3.Connection, period_id: int) -> list[dict[s
         "SELECT e.*, d.title AS document_title FROM expenses e LEFT JOIN documents d ON d.id = e.document_id "
         "WHERE e.property_id = ? AND e.status != 'ungeklaert' AND COALESCE(e.paid_on, e.invoice_date) BETWEEN ? AND ? "
         "AND e.id NOT IN (SELECT expense_id FROM bk_costs WHERE period_id = ? AND expense_id IS NOT NULL) "
-        "ORDER BY COALESCE(e.paid_on, e.invoice_date)", (p["property_id"], p["start"], p["end"], period_id)))
+        "AND (e.document_id IS NULL OR e.document_id NOT IN (SELECT document_id FROM bk_costs WHERE period_id = ? AND document_id IS NOT NULL)) "
+        "ORDER BY COALESCE(e.paid_on, e.invoice_date)", (p["property_id"], p["start"], p["end"], period_id, period_id)))
     for e in items:
         e["suggested_type"], e["suggested_reason"] = suggest_type(e["category_key"], f"{e['payee']} {e['note']} {e['document_title'] or ''}")
     return items
@@ -207,6 +208,10 @@ def add_cost(conn: sqlite3.Connection, period_id: int, data: dict[str, Any]) -> 
         "source_category, origin, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
         (period_id, ct, (data.get("description") or "").strip()[:300], amount, data.get("invoice_date"), data.get("unit_id"),
          document_id, data.get("expense_id"), source_category, "ausgabe" if data.get("expense_id") else "manuell", now())).lastrowid
+    if data.get("expense_id") and e["origin"] == "user":  # in den Ausgaben bereits von Hand geprüft
+        conn.execute("UPDATE bk_costs SET verified_at = ? WHERE id = ?", (now(), cid))
+    elif not data.get("expense_id"):
+        conn.execute("UPDATE bk_costs SET verified_at = ? WHERE id = ?", (now(), cid))
     touch(conn, period_id)
     audit(conn, "created", "bk_cost", cid, {k: data.get(k) for k in ("cost_type", "amount_cents", "expense_id", "unit_id")})
     return cid
@@ -481,7 +486,7 @@ def _line_public(line: dict[str, Any]) -> dict[str, Any]:
     if "weight_total" in line:
         out["weight_total"] = float(line["weight_total"])
     out["items"] = [{k: c[k] for k in ("id", "description", "amount_cents", "invoice_date", "unit_id", "unit_name", "document_id",
-                                       "expense_id", "origin", "source_category")} for c in line["items"]]
+                                       "expense_id", "origin", "source_category", "evidence", "verified_at")} for c in line["items"]]
     return out
 
 
@@ -613,19 +618,34 @@ def _checks(conn, p, lines, results, segs, costs, issues, shares, distributable,
             issue("info", f"datum:{c['id']}", f"„{c['description'] or euro(c['amount_cents'])}“ hat ein Rechnungsdatum außerhalb des "
                   "Abrechnungszeitraums. Bei Abrechnung nach Abfluss ist das zulässig; bitte Zeitraum der Leistung prüfen.")
 
-    # Doppelte Rechnungen
+    # Doppelte Rechnungen. Aus einem Bescheid zerlegte Positionen (Herkunft „beleg“) teilen sich einen Beleg –
+    # doppelt ist dort erst dieselbe Fundstelle; Gesamtbetrag und Zerlegung desselben Belegs zusammen sind doppelt.
     seen: dict[tuple, dict] = {}
+    whole_docs = {c["document_id"] for c in costs if c["document_id"] and c["origin"] != "beleg"}
     for c in costs:
         if c["document_id"]:
-            k = ("doc", c["document_id"])
+            k = ("doc", c["document_id"]) if c["origin"] != "beleg" else ("doc", c["document_id"], c["evidence"], c["cost_type"])
             if k in seen:
                 issue("warnung", f"doppelt_beleg:{c['id']}", f"Derselbe Beleg ist zweimal erfasst: „{c['description']}“ ({euro(c['amount_cents'])}).")
+            elif c["origin"] == "beleg" and c["document_id"] in whole_docs:
+                issue("warnung", f"doppelt_zerlegt:{c['id']}", f"„{c['description']}“: Der Beleg ist sowohl mit dem Gesamtbetrag als auch "
+                      "in einzelne Positionen zerlegt erfasst. Bitte eine der beiden Erfassungen entfernen.")
             seen[k] = c
         k2 = ("sum", c["cost_type"], c["amount_cents"], c["invoice_date"])
         if c["invoice_date"] and k2 in seen:
             issue("warnung", f"doppelt:{c['id']}", f"Mögliche Doppelerfassung: zwei Positionen „{COST_TYPES[c['cost_type']]['label']}“ über "
                   f"{euro(c['amount_cents'])} vom {d(c['invoice_date']):%d.%m.%Y}.")
         seen[k2] = c
+
+    # Belegprüfung: automatisch übernommene Positionen bis zur Prüfung kennzeichnen, fehlende Belege nennen
+    unverified = [c for c in costs if c["origin"] != "manuell" and not c.get("verified_at")]
+    if unverified:
+        issue("warnung", "ungeprueft", f"{len(unverified)} automatisch erfasste Position{'en' if len(unverified) != 1 else ''} noch nicht "
+              "mit dem Originalbeleg abgeglichen (Schritt „Kosten“: Beleg öffnen, Betrag und Kostenart prüfen, „geprüft“ antippen).")
+    no_doc = [c for c in costs if not c["document_id"] and c["cost_type"] != "nicht_umlagefaehig"]
+    if no_doc:
+        issue("info", "ohne_beleg", f"{len(no_doc)} Position{'en' if len(no_doc) != 1 else ''} ohne verknüpften Beleg. Mieter haben ein "
+              "Recht auf Belegeinsicht – Beleg im Archiv ablegen oder in der Notiz festhalten, wo er liegt.")
 
     # Rundung / Vollständigkeit der Verteilung
     if distributed != sum(l["total"] for l in lines if not l.get("excluded") and l.get("ok")):
