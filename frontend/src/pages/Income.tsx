@@ -175,6 +175,7 @@ function IncomeCard({ it, year, open, onToggle, onChanged }: { it: any; year: nu
                   <Fragment key={m.month}>
                     <tr className={`m-${m.status}`}>
                       <td>{MONTHS[m.month - 1]}<span className="muted sub-line">{STATUS[m.status]}{m.bank_missing ? " · Konto prüfen" : ""}</span>
+                        {m.dunned?.length > 0 && <span className="sub-line warn-text">{m.dunned.map((x: any) => `${x.kind === "mahnung" ? "Mahnung" : "Erinnerung"} ${date(x.date)}`).join(" · ")}</span>}
                         {m.exception && <span className="sub-line">{m.exception.note || "Ausfall hinterlegt"} · <button className="link small" onClick={() => clearMissing(m.exception.id)}>aufheben</button></span>}
                         {m.status === "angenommen" && !m.exception &&
                           <button className="link small" onClick={() => { setMissing(missing === m.month ? null : m.month); setMf({ paid: "", note: "" }); }}>Ausgeblieben?</button>}
@@ -198,6 +199,7 @@ function IncomeCard({ it, year, open, onToggle, onChanged }: { it: any; year: nu
               </tbody>
             </table>
           </div>
+          {it.arrears > 0 && <p><a className="secondary small btn-link" href={`#/mieter/${it.tenancy_id}`}>Rückstand anmahnen</a></p>}
           <p className="hint small-num">Jahressoll: Kaltmiete {money(it.soll_parts.cold)} · BK-VZ {money(it.soll_parts.bk)} · HK-VZ {money(it.soll_parts.hk)}</p>
           <h3>Zahlungen {year}</h3>
           {it.payments.length === 0 ? <p className="muted">Keine Zahlungen erfasst.</p> : (

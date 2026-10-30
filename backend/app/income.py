@@ -122,6 +122,49 @@ def payments(conn: sqlite3.Connection, tenancy_id: int) -> list[dict[str, Any]]:
     return sorted(out, key=lambda p: p["date"])
 
 
+def month_rows(conn: sqlite3.Connection, t: dict[str, Any], year: int, today: date, assume: bool,
+               bank_until: date | None) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Soll/Ist je Monat eines Mietverhältnisses (Grundlage für Einnahmen und Mahnungen)."""
+    pays = [p for p in payments(conn, t["id"]) if p["year"] == year]
+    exc = {r["month"]: r for r in rows(conn.execute("SELECT * FROM rent_exceptions WHERE tenancy_id = ? AND month LIKE ?",
+                                                     (t["id"], f"{year}-%")))}
+    pays_by_bank = conn.execute("SELECT COUNT(*) FROM transactions WHERE tenancy_id = ? AND kind = 'einnahme'", (t["id"],)).fetchone()[0] > 0
+    months, cum_soll, cum_ist = [], 0, 0
+    for m in range(1, 13):
+        soll = monthly_soll(t, year, m)
+        key = f"{year}-{m:02d}"
+        actual = [p for p in pays if p["month"] == m]
+        due = date(year, m, 1) <= today and soll["total"] > 0
+        ex = exc.get(key)
+        assumed = bank_missing = False
+        if actual:
+            ist = sum(p["amount"] for p in actual)
+        elif ex:
+            ist = ex["paid_cents"]
+        elif due and assume:
+            ist, assumed = soll["total"], True
+            bank_missing = pays_by_bank and bank_until is not None and bank_until >= date(year, m, 1) + timedelta(days=7)
+        else:
+            ist = 0
+        cum_soll += soll["total"] if (due or actual or ex) else 0
+        cum_ist += ist
+        if soll["total"] == 0 and ist == 0:
+            st = "frei"
+        elif not due and not actual:
+            st = "kuenftig"
+        elif assumed:
+            st = "angenommen"
+        elif ist >= soll["total"]:
+            st = "bezahlt"
+        elif ist > 0:
+            st = "teilweise"
+        else:
+            st = "offen"
+        months.append({"month": m, "soll": soll, "ist": ist, "saldo": cum_ist - cum_soll, "status": st, "assumed": assumed,
+                       "bank_missing": bool(bank_missing), "exception": ex and {"id": ex["id"], "paid_cents": ex["paid_cents"], "note": ex["note"]}})
+    return months, pays
+
+
 def overview(conn: sqlite3.Connection, year: int, property_id: int | None = None) -> dict[str, Any]:
     link_unassigned(conn, property_id)
     start, end = date(year, 1, 1), date(year, 12, 31)
@@ -134,43 +177,11 @@ def overview(conn: sqlite3.Connection, year: int, property_id: int | None = None
         s, e = tn.span(t)
         if s > end or (e and e < start):
             continue
-        pays = [p for p in payments(conn, t["id"]) if p["year"] == year]
-        exc = {r["month"]: r for r in rows(conn.execute("SELECT * FROM rent_exceptions WHERE tenancy_id = ? AND month LIKE ?",
-                                                         (t["id"], f"{year}-%")))}
-        pays_by_bank = conn.execute("SELECT COUNT(*) FROM transactions WHERE tenancy_id = ? AND kind = 'einnahme'", (t["id"],)).fetchone()[0] > 0
-        months, cum_soll, cum_ist = [], 0, 0
-        for m in range(1, 13):
-            soll = monthly_soll(t, year, m)
-            key = f"{year}-{m:02d}"
-            actual = [p for p in pays if p["month"] == m]
-            due = date(year, m, 1) <= today and soll["total"] > 0
-            ex = exc.get(key)
-            assumed = bank_missing = False
-            if actual:
-                ist = sum(p["amount"] for p in actual)
-            elif ex:
-                ist = ex["paid_cents"]
-            elif due and assume:
-                ist, assumed = soll["total"], True
-                bank_missing = pays_by_bank and bank_until is not None and bank_until >= date(year, m, 1) + timedelta(days=7)
-            else:
-                ist = 0
-            cum_soll += soll["total"] if (due or actual or ex) else 0
-            cum_ist += ist
-            if soll["total"] == 0 and ist == 0:
-                st = "frei"
-            elif not due and not actual:
-                st = "kuenftig"
-            elif assumed:
-                st = "angenommen"
-            elif ist >= soll["total"]:
-                st = "bezahlt"
-            elif ist > 0:
-                st = "teilweise"
-            else:
-                st = "offen"
-            months.append({"month": m, "soll": soll, "ist": ist, "saldo": cum_ist - cum_soll, "status": st, "assumed": assumed,
-                           "bank_missing": bool(bank_missing), "exception": ex and {"id": ex["id"], "paid_cents": ex["paid_cents"], "note": ex["note"]}})
+        months, pays = month_rows(conn, t, year, today, assume, bank_until)
+        from . import dunning  # spät importiert: dunning nutzt selbst income
+        dunned = dunning.by_month(conn, t["id"])
+        for x in months:
+            x["dunned"] = dunned.get(f"{year}-{x['month']:02d}", [])
         due_months = [x for x in months if date(year, x["month"], 1) <= today]
         soll_due = sum(x["soll"]["total"] for x in due_months)
         ist_total = sum(x["ist"] for x in months)

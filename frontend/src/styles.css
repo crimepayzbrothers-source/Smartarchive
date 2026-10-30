@@ -724,3 +724,14 @@ select.invalid, input.invalid { border-color: var(--danger); box-shadow: 0 0 0 3
 .confirm-delete p { margin: 0 0 .6rem; }
 .danger-btn { background: var(--danger); color: var(--paper); font-weight: 600; border: 0; display: inline-flex; align-items: center; gap: .4rem; }
 .danger-btn:hover:not(:disabled) { filter: brightness(1.08); }
+
+/* Mahnwesen */
+.notice.block { display: block; }
+.dunning .plain-list li .num { white-space: nowrap; }
+.letter-item { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .75rem; padding: .35rem 0; }
+.letter-item > span:first-child { flex: 1 1 60%; min-width: 0; }
+.month-pick { border: 1px solid var(--line); border-radius: var(--radius); padding: .4rem .8rem .2rem; margin: 0; }
+.month-pick legend { font-weight: 600; font-size: .9rem; padding: 0 .3rem; }
+.month-pick .check span:nth-child(2) { flex: 1; }
+.month-pick-total { display: flex; justify-content: space-between; border-top: 1px solid var(--line); padding-top: .4rem; margin: .3rem 0; }
+.form .form.grid { padding: 0; }

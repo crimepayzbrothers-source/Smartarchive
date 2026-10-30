@@ -448,6 +448,22 @@ MIGRATIONS: list[str] = [
         UNIQUE (tenancy_id, month)
     );
     """,
+    # 14 – Mahnwesen: Zahlungserinnerungen und Mahnungen je Mietverhältnis (Snapshot für unveränderte Reproduktion)
+    """
+    CREATE TABLE dunning_letters (
+        id INTEGER PRIMARY KEY,
+        tenancy_id INTEGER NOT NULL REFERENCES tenancies(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL CHECK (kind IN ('erinnerung', 'mahnung')),
+        letter_date TEXT NOT NULL,
+        due_date TEXT NOT NULL,
+        months TEXT NOT NULL,              -- JSON: [{"month": "2026-07", "soll": …, "ist": …, "open": …}]
+        total_cents INTEGER NOT NULL,
+        snapshot TEXT NOT NULL,            -- JSON: alles, was das PDF braucht
+        document_id INTEGER REFERENCES documents(id) ON DELETE SET NULL,
+        created_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_dunning_tenancy ON dunning_letters(tenancy_id);
+    """,
 ]
 
 

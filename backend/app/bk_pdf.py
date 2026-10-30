@@ -118,8 +118,14 @@ def render(snap: dict[str, Any], tenancy_id: int | None = None, draft: bool = Fa
 
 
 def _letterhead(snap: dict[str, Any], r: dict[str, Any]) -> list:
-    res, ll = snap["result"], snap.get("landlord") or {}
-    period = res["period"]
+    period = snap["result"]["period"]
+    released = dt(snap.get("released_at")) or date.today().strftime("%d.%m.%Y")
+    return letterhead(snap.get("landlord") or {}, r["parties"], r["unit_name"], period["property_address"], released)
+
+
+def letterhead(ll: dict[str, Any], parties: list[dict[str, Any]], unit_name: str | None, property_address: str | None,
+               date_text: str) -> list:
+    """Briefkopf mit Logo, Absenderzeile, Anschrift der Mieter (Fensterumschlag) und Ort/Datum."""
     logo = None
     if ll.get("logo"):
         try:
@@ -137,13 +143,12 @@ def _letterhead(snap: dict[str, Any], r: dict[str, Any]) -> list:
     head.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("ALIGN", (1, 0), (1, 0), "RIGHT"),
                               ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0)]))
     sender = " · ".join(x.replace("\n", ", ") for x in (ll.get("name"), ll.get("address")) if x)
-    addr_parties = [f"{p.get('first_name', '')} {p.get('last_name', '')}".strip() for p in r["parties"]]
-    own = next((p.get("address") for p in r["parties"] if p.get("address")), "")
-    address = own or "\n".join(x for x in ((r["unit_name"] or "") and f"Wohnung {r['unit_name']}", period["property_address"]) if x)
+    addr_parties = [f"{p.get('first_name', '')} {p.get('last_name', '')}".strip() for p in parties]
+    own = next((p.get("address") for p in parties if p.get("address")), "")
+    address = own or "\n".join(x for x in ((unit_name or "") and f"Wohnung {unit_name}", property_address) if x)
     place = ll.get("place") or ""
-    released = dt(snap.get("released_at")) or date.today().strftime("%d.%m.%Y")
     block = Table([[[P(sender, "sender"), Spacer(1, 2), P("\n".join(addr_parties + [address.replace(", ", "\n", 1)]), "addr")],
-                    P(f"{place + ', ' if place else ''}{released}", "right")]], colWidths=[105 * mm, 65 * mm])
+                    P(f"{place + ', ' if place else ''}{date_text}", "right")]], colWidths=[105 * mm, 65 * mm])
     block.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0),
                                ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("VALIGN", (1, 0), (1, 0), "BOTTOM")]))
     return [head, Spacer(1, 10 * mm), block, Spacer(1, 9 * mm)]
