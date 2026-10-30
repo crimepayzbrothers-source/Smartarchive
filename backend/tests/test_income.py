@@ -91,4 +91,55 @@ def test_late_tenancy_links_existing_payments(client):
                       headers=HEADERS).json()["id"]
     ov = client.get("/api/income", params={"year": 2026}).json()
     item = next(i for i in ov["items"] if i["tenancy_id"] == tid)
-    assert item["ist"] == 60000 and ov["unassigned"] == []
+    feb = item["months"][1]
+    assert (feb["ist"], feb["assumed"], feb["status"]) == (60000, False, "bezahlt") and ov["unassigned"] == []
+    assert item["months"][2]["status"] == "angenommen"  # März ohne Eingang: automatisch als eingegangen verbucht
+
+
+
+def test_assumed_payments_and_missed_months(client, monkeypatch):
+    import datetime as dt
+    from app import income
+
+    class FakeDate(dt.date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 10, 30)
+    monkeypatch.setattr(income, "date", FakeDate)
+    pid, units, t, acc = _setup(client)
+
+    def ov():
+        return {i["tenancy_id"]: i for i in client.get("/api/income", params={"year": 2026}).json()["items"]}
+    # Ohne jede Zahlung: alle fälligen Monate gelten als eingegangen (Jan–Okt), Nov/Dez noch nicht fällig
+    eg = ov()[t["eg"]]
+    assert [m["status"] for m in eg["months"]] == ["angenommen"] * 10 + ["kuenftig"] * 2
+    assert (eg["ist"], eg["arrears"], eg["assumed"]) == (560000, 0, 560000)
+
+    # Ausbleibende Zahlung im Juli hinterlegen (gar nichts gezahlt), im August nur 300 €
+    assert client.put("/api/income/exceptions", json={"tenancy_id": t["eg"], "month": "2026-07", "note": "Mieter verreist"},
+                      headers=HEADERS).status_code == 200
+    client.put("/api/income/exceptions", json={"tenancy_id": t["eg"], "month": "2026-08", "paid_cents": 30000}, headers=HEADERS)
+    eg = ov()[t["eg"]]
+    jul, aug = eg["months"][6], eg["months"][7]
+    assert (jul["status"], jul["ist"], jul["exception"]["note"]) == ("offen", 0, "Mieter verreist")
+    assert (aug["status"], aug["ist"]) == ("teilweise", 30000)
+    assert eg["arrears"] == 56000 + 26000
+    # Ausfall wieder aufheben → Monat gilt wieder als eingegangen
+    client.delete(f"/api/income/exceptions/{jul['exception']['id']}", headers=HEADERS)
+    assert ov()[t["eg"]]["months"][6]["status"] == "angenommen"
+
+    # Echte Zahlung hat Vorrang; fehlt bei einem Überweiser ein Eingang, obwohl das Konto weiter reicht → Hinweis
+    _import(client, acc, [f"02.{m:02d}.2026;02.{m:02d}.2026;Gutschrift;Otto Weber Dauerauftrag;560,00;EUR;DE00;" for m in (1, 2, 4)])
+    for x in client.get("/api/transactions/review").json()["auto"]:
+        client.post(f"/api/transactions/{x['id']}/decide", json={"kind": "einnahme", "tenancy_id": t["eg"]}, headers=HEADERS)
+    eg = ov()[t["eg"]]
+    assert eg["months"][0]["status"] == "bezahlt" and eg["months"][0]["assumed"] is False
+    assert eg["months"][2]["status"] == "angenommen" and eg["months"][2]["bank_missing"] is True   # März fehlt im Konto
+    assert eg["months"][5]["bank_missing"] is False                                                    # Juni: Konto reicht nicht so weit
+    assert 3 in eg["bank_missing"]
+
+    # Automatische Verbuchung ausschalten → nur echte Zahlungen zählen
+    client.put("/api/income/settings", json={"assume_paid": False}, headers=HEADERS)
+    data = client.get("/api/income", params={"year": 2026}).json()
+    eg = next(i for i in data["items"] if i["tenancy_id"] == t["eg"])
+    assert data["assume_paid"] is False and eg["months"][2]["status"] == "offen" and eg["ist"] == 3 * 56000 + 30000

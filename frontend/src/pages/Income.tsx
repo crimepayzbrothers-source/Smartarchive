@@ -1,11 +1,12 @@
 // Einnahmen: Soll laut Mietverhältnissen gegen Ist aus Mietkonto und Barzahlungen, je Monat.
-import { useState, type FormEvent } from "react";
-import { centsToInput, date, del, get, money, parseMoney, post } from "../api";
+import { Fragment, useState, type FormEvent } from "react";
+import { centsToInput, date, del, get, money, parseMoney, post, put } from "../api";
 import { go, useLoad, useMeta, useToast } from "../lib";
 import { Empty, ErrorBox, Icon, Loading } from "../components/ui";
 
 const MONTHS = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"];
-const STATUS: Record<string, string> = { bezahlt: "bezahlt", teilweise: "teilweise", offen: "offen", frei: "kein Mietverhältnis", kuenftig: "noch nicht fällig" };
+const STATUS: Record<string, string> = { bezahlt: "bezahlt", angenommen: "als eingegangen verbucht", teilweise: "teilweise", offen: "ausgeblieben",
+  frei: "kein Mietverhältnis", kuenftig: "noch nicht fällig" };
 
 export default function Income({ params }: { params: URLSearchParams }) {
   const { meta } = useMeta();
@@ -14,6 +15,13 @@ export default function Income({ params }: { params: URLSearchParams }) {
   const [open, setOpen] = useState<number | null>(null);
   const { data, error, loading, reload } = useLoad(() => get("/api/income", { year, property_id: property }), [year, property]);
   const years = Array.from({ length: 6 }, (_, i) => new Date().getFullYear() + 1 - i);
+  const toast = useToast();
+  const [assumeLocal, setAssumeLocal] = useState<boolean | null>(null);
+  const toggleAssume = async (on: boolean) => {
+    setAssumeLocal(on);  // sofort umschalten, Daten laden nach
+    try { await put("/api/income/settings", { assume_paid: on }); reload(); }
+    catch (e: any) { setAssumeLocal(null); toast({ kind: "error", text: e.message }); }
+  };
 
   return (
     <div className="page income">
@@ -37,12 +45,16 @@ export default function Income({ params }: { params: URLSearchParams }) {
       {error && <ErrorBox text={error} />}
       {loading && !data ? <Loading /> : data && (
         <>
+          <label className="check assume-toggle"><input type="checkbox" checked={assumeLocal ?? data.assume_paid} onChange={(e) => toggleAssume(e.target.checked)} />
+            <span>Fällige Mieten automatisch als eingegangen verbuchen<span className="muted sub-line">Ab dem Monatsersten gilt die Sollmiete als gezahlt.
+              Echte Zahlungen aus dem Mietkonto haben Vorrang; ausbleibende Zahlungen hinterlegen Sie je Monat.</span></span></label>
           <div className="bk-kpis">
             <div><span>Soll {year}</span><strong>{money(data.totals.soll_year)}</strong></div>
             <div><span>Soll bis heute</span><strong>{money(data.totals.soll_due)}</strong></div>
             <div><span>Eingegangen</span><strong className="pos">{money(data.totals.ist)}</strong></div>
             <div><span>Rückstände</span><strong className={data.totals.arrears ? "neg" : ""}>{money(data.totals.arrears)}</strong></div>
             <div><span>Überzahlungen</span><strong>{money(data.totals.credit)}</strong></div>
+            {data.assume_paid && <div><span>davon angenommen</span><strong>{money(data.totals.assumed)}</strong></div>}
           </div>
           {data.open_incoming > 0 && (
             <p className="notice warn"><span>{data.open_incoming} Zahlungseingänge im Mietkonto sind noch nicht zugeordnet.</span>
@@ -104,6 +116,27 @@ function IncomeCard({ it, year, open, onToggle, onChanged }: { it: any; year: nu
     await del(`/api/income/receipts/${id}`);
     onChanged();
   };
+  const [missing, setMissing] = useState<number | null>(null);
+  const [mf, setMf] = useState({ paid: "", note: "" });
+  const saveMissing = async (m: number) => {
+    setBusy(true);
+    try {
+      await put("/api/income/exceptions", { tenancy_id: it.tenancy_id, month: `${year}-${String(m).padStart(2, "0")}`,
+        paid_cents: parseMoney(mf.paid) || 0, note: mf.note });
+      toast({ kind: "ok", text: "Ausbleibende Zahlung hinterlegt." });
+      setMissing(null); setMf({ paid: "", note: "" });
+      onChanged();
+    } catch (ex: any) {
+      toast({ kind: "error", text: ex.message });
+    } finally {
+      setBusy(false);
+    }
+  };
+  const clearMissing = async (id: number) => {
+    await del(`/api/income/exceptions/${id}`);
+    toast({ kind: "ok", text: "Ausfall aufgehoben." });
+    onChanged();
+  };
   const monthsDue = it.months.filter((m: any) => m.soll.total > 0);
   const nextSoll = monthsDue.length ? monthsDue[monthsDue.length - 1].soll.total : 0;
 
@@ -123,11 +156,15 @@ function IncomeCard({ it, year, open, onToggle, onChanged }: { it: any; year: nu
       </button>
       <ol className="month-strip" aria-label="Monate">
         {it.months.map((m: any) => (
-          <li key={m.month} className={m.status} title={`${MONTHS[m.month - 1]}: Soll ${money(m.soll.total)}, Ist ${money(m.ist)} – ${STATUS[m.status]}`}>
+          <li key={m.month} className={`${m.status} ${m.bank_missing ? "check-bank" : ""}`}
+            title={`${MONTHS[m.month - 1]}: Soll ${money(m.soll.total)}, Ist ${money(m.ist)} – ${STATUS[m.status]}${m.bank_missing ? " – im Mietkonto kein Eingang" : ""}`}>
             <span>{MONTHS[m.month - 1].slice(0, 1)}</span>
           </li>
         ))}
       </ol>
+      {it.bank_missing.length > 0 && (
+        <p className="hint warn-text">Im Mietkonto fehlt ein Eingang für {it.bank_missing.map((m: number) => MONTHS[m - 1]).join(", ")} – prüfen und ggf. als ausgeblieben hinterlegen.</p>
+      )}
       {open && (
         <div className="income-detail">
           <div className="table-wrap">
@@ -135,12 +172,28 @@ function IncomeCard({ it, year, open, onToggle, onChanged }: { it: any; year: nu
               <thead><tr><th>Monat</th><th>Soll</th><th>Ist</th><th>Saldo</th></tr></thead>
               <tbody>
                 {it.months.filter((m: any) => m.soll.total || m.ist).map((m: any) => (
-                  <tr key={m.month} className={`m-${m.status}`}>
-                    <td>{MONTHS[m.month - 1]}<span className="muted sub-line">{STATUS[m.status]}</span></td>
-                    <td>{money(m.soll.total)}{m.soll.days && m.soll.days < 28 ? <span className="muted sub-line">{m.soll.days} Tage</span> : null}</td>
-                    <td>{money(m.ist)}</td>
-                    <td className={m.saldo < 0 ? "neg" : ""}>{money(m.saldo)}</td>
-                  </tr>
+                  <Fragment key={m.month}>
+                    <tr className={`m-${m.status}`}>
+                      <td>{MONTHS[m.month - 1]}<span className="muted sub-line">{STATUS[m.status]}{m.bank_missing ? " · Konto prüfen" : ""}</span>
+                        {m.exception && <span className="sub-line">{m.exception.note || "Ausfall hinterlegt"} · <button className="link small" onClick={() => clearMissing(m.exception.id)}>aufheben</button></span>}
+                        {m.status === "angenommen" && !m.exception &&
+                          <button className="link small" onClick={() => { setMissing(missing === m.month ? null : m.month); setMf({ paid: "", note: "" }); }}>Ausgeblieben?</button>}
+                      </td>
+                      <td>{money(m.soll.total)}{m.soll.days && m.soll.days < 28 ? <span className="muted sub-line">{m.soll.days} Tage</span> : null}</td>
+                      <td>{money(m.ist)}{m.assumed && <span className="muted sub-line">angenommen</span>}</td>
+                      <td className={m.saldo < 0 ? "neg" : ""}>{money(m.saldo)}</td>
+                    </tr>
+                    {missing === m.month && (
+                      <tr className="missing-row"><td colSpan={4}>
+                        <div className="inline-add">
+                          <label>Tatsächlich gezahlt (€)<input inputMode="decimal" value={mf.paid} onChange={(e) => setMf({ ...mf, paid: e.target.value })} placeholder="0,00" /></label>
+                          <label>Notiz<input value={mf.note} onChange={(e) => setMf({ ...mf, note: e.target.value })} placeholder="z. B. Mahnung am 10. versandt" /></label>
+                          <button className="primary small" disabled={busy} onClick={() => saveMissing(m.month)}>Hinterlegen</button>
+                          <button className="ghost small" onClick={() => setMissing(null)}>Abbrechen</button>
+                        </div>
+                      </td></tr>
+                    )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>

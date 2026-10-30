@@ -5,6 +5,11 @@
 - Ist: zugeordnete Mieteingänge aus dem Mietkonto und von Hand erfasste Zahlungen (z. B. bar).
 - Monatszuordnung einer Zahlung: Monat des Zahlungseingangs; Eingänge ab dem 25. zählen für den Folgemonat
   (übliche Vorauszahlung der Miete). Bei Hand-Erfassung kann der Monat ausdrücklich gewählt werden.
+- Automatische Verbuchung (Einstellung „rent_assume_paid“, Standard: an): Ab dem Monatsersten gilt das Soll als
+  eingegangen („angenommen“), solange für den Monat keine echte Zahlung und kein Ausfall hinterlegt ist.
+  Echte Zahlungen (Mietkonto, von Hand) haben Vorrang; einen Ausfall (ganz oder teilweise) hinterlegen Sie selbst.
+  Reicht das Mietkonto über den Monat hinaus und fehlt dort ein Eingang eines Mieters, der sonst überweist,
+  wird darauf hingewiesen – die Annahme bleibt, bis Sie entscheiden.
 - Der Saldo läuft innerhalb des Jahres auf (negativ = Rückstand). Ein Vortrag aus Vorjahren wird nicht gebildet.
 Es wird nichts steuerlich bewertet; die Übersicht dokumentiert Zahlungen.
 """
@@ -18,7 +23,7 @@ from fractions import Fraction
 from typing import Any
 
 from . import tenancy as tn
-from .db import rows
+from .db import get_setting, rows
 
 EARLY_DAY = 25
 
@@ -121,34 +126,54 @@ def overview(conn: sqlite3.Connection, year: int, property_id: int | None = None
     link_unassigned(conn, property_id)
     start, end = date(year, 1, 1), date(year, 12, 31)
     today = date.today()
+    assume = bool(get_setting(conn, "rent_assume_paid", True))
+    last = conn.execute("SELECT MAX(booking_date) FROM transactions").fetchone()[0]
+    bank_until = date.fromisoformat(last) if last else None
     items = []
     for t in tn.list_all(conn, property_id):
         s, e = tn.span(t)
         if s > end or (e and e < start):
             continue
         pays = [p for p in payments(conn, t["id"]) if p["year"] == year]
+        exc = {r["month"]: r for r in rows(conn.execute("SELECT * FROM rent_exceptions WHERE tenancy_id = ? AND month LIKE ?",
+                                                         (t["id"], f"{year}-%")))}
+        pays_by_bank = conn.execute("SELECT COUNT(*) FROM transactions WHERE tenancy_id = ? AND kind = 'einnahme'", (t["id"],)).fetchone()[0] > 0
         months, cum_soll, cum_ist = [], 0, 0
         for m in range(1, 13):
             soll = monthly_soll(t, year, m)
-            ist = sum(p["amount"] for p in pays if p["month"] == m)
-            cum_soll += soll["total"]
+            key = f"{year}-{m:02d}"
+            actual = [p for p in pays if p["month"] == m]
+            due = date(year, m, 1) <= today and soll["total"] > 0
+            ex = exc.get(key)
+            assumed = bank_missing = False
+            if actual:
+                ist = sum(p["amount"] for p in actual)
+            elif ex:
+                ist = ex["paid_cents"]
+            elif due and assume:
+                ist, assumed = soll["total"], True
+                bank_missing = pays_by_bank and bank_until is not None and bank_until >= date(year, m, 1) + timedelta(days=7)
+            else:
+                ist = 0
+            cum_soll += soll["total"] if (due or actual or ex) else 0
             cum_ist += ist
-            saldo = cum_ist - cum_soll
-            future = date(year, m, 1) > today
             if soll["total"] == 0 and ist == 0:
                 st = "frei"
-            elif future and ist == 0:
+            elif not due and not actual:
                 st = "kuenftig"
+            elif assumed:
+                st = "angenommen"
             elif ist >= soll["total"]:
                 st = "bezahlt"
             elif ist > 0:
                 st = "teilweise"
             else:
                 st = "offen"
-            months.append({"month": m, "soll": soll, "ist": ist, "saldo": saldo, "status": st})
+            months.append({"month": m, "soll": soll, "ist": ist, "saldo": cum_ist - cum_soll, "status": st, "assumed": assumed,
+                           "bank_missing": bool(bank_missing), "exception": ex and {"id": ex["id"], "paid_cents": ex["paid_cents"], "note": ex["note"]}})
         due_months = [x for x in months if date(year, x["month"], 1) <= today]
         soll_due = sum(x["soll"]["total"] for x in due_months)
-        ist_total = sum(p["amount"] for p in pays)
+        ist_total = sum(x["ist"] for x in months)
         balance = ist_total - soll_due
         items.append({
             "tenancy_id": t["id"], "names": t["names"], "property_id": t["property_id"], "property_name": t["property_name"],
@@ -157,6 +182,8 @@ def overview(conn: sqlite3.Connection, year: int, property_id: int | None = None
             "soll_year": sum(x["soll"]["total"] for x in months), "soll_due": soll_due,
             "soll_parts": {k: sum(x["soll"][k] for x in months) for k in ("cold", "bk", "hk")},
             "ist": ist_total, "balance": balance, "arrears": max(0, -balance), "credit": max(0, balance),
+            "assumed": sum(x["ist"] for x in months if x["assumed"]),
+            "bank_missing": [x["month"] for x in months if x["bank_missing"]],
         })
     items.sort(key=lambda x: (x["property_name"], x["unit_id"] or 0, x["contract_start"]))
     unassigned = rows(conn.execute(
@@ -166,6 +193,7 @@ def overview(conn: sqlite3.Connection, year: int, property_id: int | None = None
     open_in = conn.execute("SELECT COUNT(*) FROM transactions WHERE amount_cents > 0 AND status = 'open' AND substr(booking_date, 1, 4) = ?",
                            (str(year),)).fetchone()[0]
     return {
-        "year": year, "items": items, "unassigned": unassigned, "open_incoming": open_in,
-        "totals": {k: sum(i[k] for i in items) for k in ("soll_year", "soll_due", "ist", "arrears", "credit")},
+        "year": year, "items": items, "unassigned": unassigned, "open_incoming": open_in, "assume_paid": assume,
+        "bank_until": last,
+        "totals": {k: sum(i[k] for i in items) for k in ("soll_year", "soll_due", "ist", "arrears", "credit", "assumed")},
     }

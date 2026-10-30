@@ -436,6 +436,18 @@ MIGRATIONS: list[str] = [
         created_at TEXT NOT NULL
     );
     """,
+    # 13 – Ausbleibende Mietzahlungen (Ausnahme zur automatischen Verbuchung „als eingegangen“)
+    """
+    CREATE TABLE rent_exceptions (
+        id INTEGER PRIMARY KEY,
+        tenancy_id INTEGER NOT NULL REFERENCES tenancies(id) ON DELETE CASCADE,
+        month TEXT NOT NULL,
+        paid_cents INTEGER NOT NULL DEFAULT 0,
+        note TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        UNIQUE (tenancy_id, month)
+    );
+    """,
 ]
 
 

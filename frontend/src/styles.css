@@ -698,3 +698,11 @@ select.invalid, input.invalid { border-color: var(--danger); box-shadow: 0 0 0 3
 .page-head .register { max-width: 100%; overflow-x: auto; flex-wrap: nowrap; scrollbar-width: none; padding-bottom: 2px; }
 .page-head .register::-webkit-scrollbar { display: none; }
 .page-head .register button { flex: none; padding: .35rem .7rem; font-size: .9rem; }
+.month-strip li.angenommen { background: color-mix(in srgb, var(--vermietung) 55%, var(--surface)); color: #fff; }
+.month-strip li.check-bank { outline: 2px solid var(--ochre); outline-offset: -2px; }
+.assume-toggle { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: .6rem .75rem; display: flex; gap: .6rem; align-items: flex-start; margin: 0; }
+.assume-toggle input { margin-top: .25rem; flex: none; width: auto; }
+.missing-row td { background: var(--surface-2); }
+.missing-row .inline-add label { display: flex; flex-direction: column; gap: .2rem; font-size: .84rem; color: var(--ink-2); flex: 1 1 140px; }
+.missing-row .inline-add button { align-self: flex-end; }
+@media (min-width: 720px) { .income .bk-kpis { grid-template-columns: repeat(6, 1fr); } }
