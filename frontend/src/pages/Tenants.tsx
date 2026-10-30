@@ -1,5 +1,5 @@
 // Mieterverwaltung: Übersicht, Mietverhältnis anlegen/ändern, Mieterwechsel, Konditionen-Verlauf, Belegung je Objekt.
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { centsToInput, date, del, get, money, parseMoney, post, put } from "../api";
 import { go, useLoad, useMeta, useToast, type Meta } from "../lib";
 import { BackButton, Empty, ErrorBox, Icon, Loading, Sheet } from "../components/ui";
@@ -38,7 +38,7 @@ function toTerm(t: any): Term {
     hk: centsToInput(t.hk_advance_cents), persons: t.persons ?? "", note: t.note || "" };
 }
 
-export function TenancyForm({ meta, initial, onSaved, onCancel }: { meta: Meta; initial: any; onSaved: (t: any) => void; onCancel?: () => void }) {
+export function TenancyForm({ meta, initial, onSaved, onCancel, notice }: { meta: Meta; initial: any; onSaved: (t: any) => void; onCancel?: () => void; notice?: ReactNode }) {
   const toast = useToast();
   const editing = Boolean(initial.id);
   const [propertyId, setPropertyId] = useState<number | null>(initial.property_id ?? meta.properties[0]?.id ?? null);
@@ -90,6 +90,7 @@ export function TenancyForm({ meta, initial, onSaved, onCancel }: { meta: Meta; 
 
   return (
     <form className="form tenancy-form" onSubmit={submit}>
+      {notice}
       <fieldset className="form-block">
         <legend>Mietsache</legend>
         <div className="form grid">
@@ -187,6 +188,7 @@ export function TenantsPage({ params }: { params: URLSearchParams }) {
   const [status, setStatus] = useState(params.get("status") || "aktiv");
   const [q, setQ] = useState("");
   const [creating, setCreating] = useState(false);
+  const [importing, setImporting] = useState(false);
   const { data, error, loading, reload } = useLoad(() => get<any[]>("/api/tenancies", { status: status || undefined, q: q.trim() || undefined }), [status, q]);
 
   return (
@@ -197,7 +199,10 @@ export function TenantsPage({ params }: { params: URLSearchParams }) {
           <button className="on">Mieter</button>
           <button onClick={() => go("/betriebskosten")}>Betriebskosten</button>
         </nav>
-        <button className="primary" onClick={() => setCreating(true)} disabled={!meta?.properties.length}><Icon name="plus" size={18} /> Mietverhältnis anlegen</button>
+        <div className="row-actions">
+          <button className="secondary" onClick={() => setImporting(true)} disabled={!meta?.properties.length}><Icon name="camera" size={18} /> Aus Vertrag/Screenshot</button>
+          <button className="primary" onClick={() => setCreating(true)} disabled={!meta?.properties.length}><Icon name="plus" size={18} /> Mietverhältnis anlegen</button>
+        </div>
       </div>
       <form className="search-bar" role="search" onSubmit={(e) => { e.preventDefault(); (document.activeElement as HTMLElement)?.blur(); }}>
         <Icon name="search" size={20} />
@@ -232,6 +237,9 @@ export function TenantsPage({ params }: { params: URLSearchParams }) {
         </div>
       )}
 
+      <Sheet open={importing} onClose={() => setImporting(false)} title="Aus Vertrag oder Screenshot übernehmen" wide>
+        {importing && meta && <TenancyImport meta={meta} onCancel={() => setImporting(false)} onDone={(t) => { setImporting(false); reload(); go(`/mieter/${t.id}`); }} />}
+      </Sheet>
       <Sheet open={creating} onClose={() => setCreating(false)} title="Mietverhältnis anlegen" wide>
         {creating && meta && <TenancyForm meta={meta} initial={{}} onCancel={() => setCreating(false)}
           onSaved={(t) => { setCreating(false); reload(); go(`/mieter/${t.id}`); }} />}
@@ -369,6 +377,7 @@ export function OccupancyPanel({ propertyId, onChanged }: { propertyId: number; 
   const { meta } = useMeta();
   const [year, setYear] = useState(new Date().getFullYear());
   const [creating, setCreating] = useState<null | { unit_id: number | null }>(null);
+  const [importing, setImporting] = useState(false);
   const { data, error, reload } = useLoad(() => Promise.all([
     get(`/api/properties/${propertyId}/occupancy`, { year }), get<any[]>("/api/tenancies", { property_id: propertyId }),
   ]), [propertyId, year]);
@@ -381,6 +390,7 @@ export function OccupancyPanel({ propertyId, onChanged }: { propertyId: number; 
     <section className="panel occupancy">
       <header className="panel-head">
         <h2>Mietverhältnisse</h2>
+        <button className="secondary small" onClick={() => setImporting(true)}><Icon name="camera" size={16} /> Aus Vertrag/Screenshot</button>
         <select value={year} onChange={(e) => setYear(Number(e.target.value))} aria-label="Jahr">{years.map((y) => <option key={y}>{y}</option>)}</select>
       </header>
       {occ.units.map((u: any) => (
@@ -415,10 +425,138 @@ export function OccupancyPanel({ propertyId, onChanged }: { propertyId: number; 
           </ul>
         </details>
       )}
+      <Sheet open={importing} onClose={() => setImporting(false)} title="Aus Vertrag oder Screenshot übernehmen" wide>
+        {importing && meta && <TenancyImport meta={meta} propertyId={propertyId} onCancel={() => setImporting(false)}
+          onDone={() => { setImporting(false); reload(); onChanged?.(); }} />}
+      </Sheet>
       <Sheet open={creating !== null} onClose={() => setCreating(null)} title="Mietverhältnis anlegen" wide>
         {creating && meta && <TenancyForm meta={meta} initial={{ property_id: propertyId, unit_id: creating.unit_id }} onCancel={() => setCreating(null)}
           onSaved={() => { setCreating(null); reload(); onChanged?.(); }} />}
       </Sheet>
     </section>
+  );
+}
+
+// --- Übernahme aus Mietvertrag oder Screenshot --------------------------------------------
+
+const FIELD_LABEL: Record<string, string> = {
+  parties: "Vertragspartner", contract_start: "Mietbeginn", cold_rent_cents: "Kaltmiete", bk_advance_cents: "Betriebskosten-VZ",
+  hk_advance_cents: "Heizkosten-VZ", unit_id: "Wohnung", persons: "Personen", move_in: "Einzug", contract_end: "Mietende", move_out: "Auszug",
+};
+
+export function TenancyImport({ meta, propertyId, onDone, onCancel }: { meta: Meta; propertyId?: number; onDone: (t: any) => void; onCancel: () => void }) {
+  const toast = useToast();
+  const [pid, setPid] = useState<number>(propertyId ?? meta.properties[0]?.id);
+  const [files, setFiles] = useState<File[]>([]);
+  const [useAi, setUseAi] = useState(false);
+  const [archive, setArchive] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [res, setRes] = useState<any>(null);
+  const [chosen, setChosen] = useState<any>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const prop = meta.properties.find((p) => p.id === pid);
+  const unitName = (id: number | null) => prop?.units.find((u) => u.id === id)?.name;
+
+  const pick = (list: FileList | null) => {
+    const fs = Array.from(list || []);
+    setFiles(fs);
+    setRes(null);
+    setArchive(fs.some((f) => f.type === "application/pdf"));
+  };
+  const read = async () => {
+    const form = new FormData();
+    form.append("property_id", String(pid));
+    form.append("use_ai", useAi ? "1" : "0");
+    files.forEach((f) => form.append("files", f, f.name));
+    setBusy(true);
+    try {
+      const r = await fetch("/api/tenancies/extract", { method: "POST", body: form, headers: { "X-Requested-With": "SmartArchive" }, credentials: "same-origin" });
+      const d = await r.json().catch(() => null);
+      if (!r.ok) throw new Error(d?.error || `Fehler ${r.status}`);
+      setRes(d);
+      if (d.ai_error && useAi) toast({ kind: "error", text: `KI: ${d.ai_error} – lokale Auslese wird angezeigt.` });
+    } catch (e: any) {
+      toast({ kind: "error", text: e.message });
+    } finally {
+      setBusy(false);
+    }
+  };
+  const archiveFiles = async () => {
+    const form = new FormData();
+    form.append("area", "vermietung");
+    form.append("property_id", String(pid));
+    form.append("combine", files.length > 1 && files.every((f) => f.type.startsWith("image/")) ? "1" : "0");
+    files.forEach((f) => form.append("files", f, f.name));
+    const r = await fetch("/api/upload", { method: "POST", body: form, headers: { "X-Requested-With": "SmartArchive" }, credentials: "same-origin" });
+    if (!r.ok) toast({ kind: "error", text: "Mietvertrag konnte nicht im Archiv abgelegt werden." });
+  };
+
+  if (chosen) {
+    const r = chosen;
+    const start = r.contract_start || "";
+    const initial = {
+      property_id: pid, unit_id: r.unit_id ?? null, contract_start: start, move_in: r.move_in || start, contract_end: r.contract_end || "",
+      move_out: r.move_out || "", parties: r.parties?.length ? r.parties : undefined,
+      terms: [{ valid_from: start, cold_rent_cents: r.cold_rent_cents ?? 0, bk_advance_cents: r.bk_advance_cents ?? 0, hk_advance_cents: r.hk_advance_cents ?? 0,
+        persons: r.persons ?? null, note: "" }],
+    };
+    const notice = (
+      <div className="notice warn import-notice">
+        <div>
+          <strong>Automatisch ausgelesen – bitte jede Angabe prüfen.</strong>
+          {r.missing?.length > 0 && <p>Nicht gefunden: {r.missing.map((k: string) => FIELD_LABEL[k] || k).join(", ")}.</p>}
+          {r.conflicts && Object.keys(r.conflicts).length > 0 && <p>Abweichung zwischen lokaler Auslese und KI bei: {Object.keys(r.conflicts).map((k) => FIELD_LABEL[k] || k).join(", ")} – übernommen ist die KI-Angabe.</p>}
+          {r.living_area && <p>Wohnfläche laut Vorlage: {String(r.living_area).replace(".", ",")} m² – ggf. an der Wohnung eintragen.</p>}
+        </div>
+      </div>
+    );
+    return <TenancyForm meta={meta} initial={initial} notice={notice} onCancel={() => setChosen(null)}
+      onSaved={async (t) => { if (archive) await archiveFiles(); onDone(t); }} />;
+  }
+
+  return (
+    <div className="form tenancy-import">
+      <p className="hint">Laden Sie den Mietvertrag (PDF oder Fotos) oder Screenshots, z. B. aus objego, hoch. Die Texterkennung läuft auf Ihrem Server;
+        erkannte Angaben füllen das Formular vor. Gespeichert wird erst, wenn Sie das Formular bestätigen.</p>
+      <label>Mietobjekt<select value={pid} onChange={(e) => { setPid(Number(e.target.value)); setRes(null); }}>
+        {meta.properties.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
+      <input ref={fileRef} type="file" accept="application/pdf,image/*" multiple hidden onChange={(e) => pick(e.target.files)} />
+      <button type="button" className="secondary" onClick={() => fileRef.current?.click()}><Icon name="file" size={18} /> {files.length ? `${files.length} Datei(en) gewählt – ändern` : "Dateien wählen"}</button>
+      {files.length > 0 && <ul className="plain-list small-files">{files.map((f) => <li key={f.name + f.size}><span>{f.name}</span><span className="muted">{Math.round(f.size / 1024)} KB</span></li>)}</ul>}
+      {meta.ai_available && (
+        <label className="check"><input type="checkbox" checked={useAi} onChange={(e) => setUseAi(e.target.checked)} />
+          Zusätzlich mit KI auslesen (Mistral, EU). Dabei wird der erkannte Text mit Namen und Beträgen übermittelt; erkennt auch Mieterlisten.</label>
+      )}
+      <label className="check"><input type="checkbox" checked={archive} onChange={(e) => setArchive(e.target.checked)} /> Dateien als Mietvertrag im Archiv ablegen (beim Objekt)</label>
+      <button className="primary" disabled={!files.length || busy} onClick={read}>{busy ? "Wird ausgelesen …" : "Auslesen"}</button>
+
+      {res && (
+        <div className="import-results">
+          {res.chars < 30 && <p className="notice warn">Kaum Text erkannt. Bitte schärferes Foto oder Screenshot in voller Auflösung verwenden.</p>}
+          {res.results.map((r: any, i: number) => (
+            <div key={i} className="import-result">
+              <strong>{r.parties?.length ? r.parties.map((p: any) => `${p.first_name} ${p.last_name}`.trim()).join(", ") : "Vertragspartner nicht erkannt"}</strong>
+              <dl className="facts">
+                <dt>Wohnung</dt><dd>{unitName(r.unit_id) || <span className="muted">nicht erkannt</span>}</dd>
+                <dt>Mietbeginn</dt><dd>{r.contract_start ? date(r.contract_start) : "–"}</dd>
+                {r.contract_end && <><dt>Mietende</dt><dd>{date(r.contract_end)}</dd></>}
+                <dt>Kaltmiete</dt><dd>{r.cold_rent_cents != null ? money(r.cold_rent_cents) : "–"}</dd>
+                <dt>BK-VZ</dt><dd>{r.bk_advance_cents != null ? money(r.bk_advance_cents) : "–"}</dd>
+                <dt>HK-VZ</dt><dd>{r.hk_advance_cents != null ? money(r.hk_advance_cents) : "–"}</dd>
+                {r.persons != null && <><dt>Personen</dt><dd>{r.persons}</dd></>}
+              </dl>
+              {r.evidence && Object.keys(r.evidence).length > 0 && (
+                <details className="collapsible-inline"><summary>Fundstellen</summary>
+                  <ul className="evidence">{Object.entries(r.evidence).map(([k, v]) => <li key={k}><span className="muted">{FIELD_LABEL[k] || k}:</span> „{String(v)}“</li>)}</ul>
+                </details>
+              )}
+              <span className="muted small-num">Quelle: {r.source === "ki" ? "KI" : r.source === "lokal+ki" ? "Texterkennung + KI" : "Texterkennung"}</span>
+              <button className="primary" onClick={() => setChosen(r)}>Prüfen und anlegen</button>
+            </div>
+          ))}
+        </div>
+      )}
+      <button type="button" className="ghost" onClick={onCancel}>Abbrechen</button>
+    </div>
   );
 }

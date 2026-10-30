@@ -640,3 +640,10 @@ details.collapsible[open] > summary { margin-bottom: .8rem; }
 .chain li.self { font-weight: 600; }
 .chain li.vacancy { color: var(--ochre); }
 .chain li.vacancy span { font-weight: 600; }
+.tenancy-import { gap: .8rem; }
+.import-results { display: flex; flex-direction: column; gap: .7rem; }
+.import-result { border: 1px solid var(--line); border-left: 4px solid var(--petrol); border-radius: var(--radius); padding: .75rem .9rem; display: flex; flex-direction: column; gap: .45rem; }
+.evidence { list-style: none; margin: .3rem 0 0; padding: 0; font-size: .82rem; display: flex; flex-direction: column; gap: .2rem; overflow-wrap: anywhere; }
+.import-notice p { margin: .25rem 0 0; font-size: .88rem; }
+.small-files li { font-size: .85rem; }
+.occupancy .panel-head { flex-wrap: wrap; }

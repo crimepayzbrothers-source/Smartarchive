@@ -7,8 +7,10 @@ from pydantic import BaseModel, Field
 from starlette.requests import Request
 from starlette.routing import Route
 
-from .. import tenancy
-from ..db import tx
+from starlette.concurrency import run_in_threadpool
+
+from .. import config, storage, tenancy, tenancy_extract
+from ..db import get_setting, rows, tx
 from .common import ApiError, body, endpoint, int_param, path_int
 
 DATE_RE = r"^\d{4}-\d{2}-\d{2}$"
@@ -122,7 +124,56 @@ async def occupancy(request: Request, conn, user):
     return {"from": start.isoformat(), "to": end.isoformat(), "units": units}
 
 
+MAX_FILES, MAX_BYTES = 10, 25 * 1024 * 1024
+
+
+@endpoint()
+async def extract(request: Request, conn, user):
+    """Mietvertrag (PDF/Foto) oder Screenshots auslesen. Speichert nichts – liefert nur Vorschläge fürs Formular."""
+    form = await request.form(max_files=MAX_FILES, max_fields=5)
+    try:
+        property_id = int(str(form.get("property_id") or "0"))
+    except ValueError:
+        property_id = 0
+    use_ai = str(form.get("use_ai") or "") in ("1", "true", "ja")
+    uploads = [f for f in form.getlist("files") if hasattr(f, "read")]
+    datas = [(await f.read(), f.filename or "datei") for f in uploads]
+    await form.close()
+    if not datas:
+        raise ApiError(400, "Bitte eine Datei wählen.")
+    if sum(len(d) for d, _ in datas) > MAX_BYTES:
+        raise ApiError(413, "Zusammen höchstens 25 MB.")
+    if not conn.execute("SELECT 1 FROM properties WHERE id = ?", (property_id,)).fetchone():
+        raise ApiError(400, "Bitte das Mietobjekt wählen.")
+    units = rows(conn.execute("SELECT id, name FROM units WHERE property_id = ? ORDER BY id", (property_id,)))
+    landlord = (get_setting(conn, "landlord", {}) or {}).get("name") or ""
+
+    def run() -> dict:
+        texts = []
+        for data, name in datas:
+            mime = storage.sniff_mime(data, filename=name)
+            try:
+                texts.append(tenancy_extract.text_from_file(data, mime))
+            except ValueError as exc:
+                raise ApiError(400, f"{name}: {exc}") from None
+        text = "\n".join(texts)
+        local = tenancy_extract.parse(text, units, [landlord] if landlord else [])
+        ai, ai_error = [], None
+        if use_ai:
+            if not (bool(get_setting(conn, "ai_enabled", True)) and config.settings.ai_available):
+                ai_error = "KI ist nicht eingerichtet oder ausgeschaltet."
+            else:
+                try:
+                    ai = tenancy_extract.ai_parse(text, units)
+                except Exception as exc:  # noqa: BLE001 – lokale Auslese reicht als Ergebnis
+                    ai_error = str(exc)
+        return {"results": tenancy_extract.merge(local, ai), "chars": len(text.strip()), "ai_used": bool(ai), "ai_error": ai_error,
+                "files": len(datas)}
+    return await run_in_threadpool(run)
+
+
 routes = [
+    Route("/api/tenancies/extract", extract, methods=["POST"]),
     Route("/api/tenancies", list_tenancies, methods=["GET"]),
     Route("/api/tenancies", create_tenancy, methods=["POST"]),
     Route("/api/tenancies/{id:int}", get_tenancy, methods=["GET"]),

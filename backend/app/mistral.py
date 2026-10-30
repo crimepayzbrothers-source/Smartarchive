@@ -161,3 +161,31 @@ def extract_invoice(text: str, timeout: float = 30) -> dict[str, Any]:
         raise AIError(f"Mistral antwortete mit HTTP {exc.code}") from exc
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
         raise AIError(f"KI-Antwort nicht verwertbar: {exc}") from exc
+
+
+def extract_tenancies(text: str, unit_names: list[str], timeout: float = 45) -> dict[str, Any]:
+    """Mietverhältnisse aus Mietvertrag oder Screenshot auslesen. Nur auf ausdrücklichen Wunsch (enthält Personendaten)."""
+    cfg = config.settings
+    if not cfg.mistral_api_key:
+        raise AIError("Kein API-Schlüssel konfiguriert")
+    prompt = (
+        "Lies aus dem folgenden Text (Mietvertrag oder Bildschirmfoto einer Mieterverwaltung) die Mietverhältnisse aus. "
+        "Ein Text kann ein oder mehrere Mietverhältnisse enthalten (z. B. eine Mieterliste). Antworte nur mit JSON: "
+        "{\"tenancies\": [{\"parties\": [{\"first_name\": str, \"last_name\": str, \"email\": str|null, \"phone\": str|null}], "
+        "\"unit\": str|null, \"contract_start\": \"YYYY-MM-DD\"|null, \"move_in\": \"YYYY-MM-DD\"|null, "
+        "\"contract_end\": \"YYYY-MM-DD\"|null, \"move_out\": \"YYYY-MM-DD\"|null, \"cold_rent_cents\": int|null, "
+        "\"bk_advance_cents\": int|null, \"hk_advance_cents\": int|null, \"persons\": int|null}]}. "
+        "Beträge monatlich in Cent. Vermieter und Hausverwaltung sind keine Mieter. „unit“ möglichst eine dieser Wohnungen: "
+        + ", ".join(unit_names[:20]) + ". Unbekannte Felder sind null. Erfinde nichts.\n\n<<<\n" + text[:MAX_TEXT_CHARS] + "\n>>>")
+    body = json.dumps({"model": cfg.mistral_model, "temperature": 0, "response_format": {"type": "json_object"},
+                       "messages": [{"role": "user", "content": prompt}]}).encode()
+    req = urllib.request.Request(cfg.mistral_base_url.rstrip("/") + "/chat/completions", data=body, method="POST",
+                                 headers={"Authorization": f"Bearer {cfg.mistral_api_key}", "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            payload = json.loads(resp.read().decode())
+        return json.loads(payload["choices"][0]["message"]["content"])
+    except urllib.error.HTTPError as exc:
+        raise AIError(f"Mistral antwortete mit HTTP {exc.code}") from exc
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
+        raise AIError(f"KI-Antwort nicht verwertbar: {exc}") from exc

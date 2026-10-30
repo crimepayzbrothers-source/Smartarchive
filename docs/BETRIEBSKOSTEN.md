@@ -146,3 +146,17 @@ Das Entwurfs-PDF trägt ein Wasserzeichen. Bei der Freigabe wird je Mieter ein P
    - Prüfung (Warnungen bestätigen)
    - Freigabe (PDF-Vorschau, freigeben, im Archiv ablegen)
 4. Die Vermieterangaben (Name, Anschrift, IBAN, Logo) stehen unten auf der Betriebskosten-Seite.
+
+## 9. Übernahme aus Mietvertrag oder Screenshot
+
+- **Wo:** Mieter → „Aus Vertrag/Screenshot“, oder auf der Objektseite bei „Mietverhältnisse“. PDF, Fotos und Screenshots sind möglich, mehrere Dateien zusammen.
+- **Auslesen:** Der Text kommt aus der PDF-Textebene, sonst aus der Texterkennung auf dem Server (`tenancy_extract.py`). Gesucht wird nach beschrifteten Angaben:
+  - Mietbeginn und -ende, Einzug und Auszug
+  - Kaltmiete bzw. Grundmiete, Betriebs- und Heizkostenvorauszahlung, Personen, Wohnfläche
+  - Vertragspartner („Mieter: …“, Formularfelder „Vorname/Nachname“, Vertragsformel „… und Herrn X – nachfolgend Mieter –“)
+  - E-Mail, Telefon und die Wohnung anhand ihrer Bezeichnung (EG ↔ Erdgeschoss, OG ↔ Obergeschoss)
+- **Fundstellen und Lücken:** Zu jeder Angabe wird die Fundstelle gezeigt. Fehlende Angaben werden benannt.
+- **Kein Raten:** Bei mehrdeutiger Wohnung (z. B. nur „OG“) wählt die App keine aus. Der Vermieter (Name aus den Vermieterangaben) wird nicht als Mieter übernommen. Gesamtmieten werden nicht als Kaltmiete gelesen.
+- **KI nur auf ausdrücklichen Wunsch:** Sie ist abschaltbar und sichtbar nur mit eingerichtetem Mistral-Schlüssel. Übermittelt wird dabei der erkannte Text mit personenbezogenen Daten. Die KI erkennt auch Mieterlisten mit mehreren Mietverhältnissen.
+- **Speichern erst nach Prüfung:** Das Ergebnis füllt nur das Formular vor. Gespeichert wird erst mit „Mietverhältnis anlegen“.
+- **Archiv:** Auf Wunsch wird der Vertrag beim Objekt archiviert (Vermietung, Upload direkt zum Mietobjekt). Bei PDF ist das voreingestellt, bei Screenshots nicht.
