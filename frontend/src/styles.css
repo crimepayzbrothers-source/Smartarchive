@@ -781,3 +781,4 @@ select.invalid, input.invalid { border-color: var(--danger); box-shadow: 0 0 0 3
 .deposit-progress { height: 8px; background: var(--surface-2); border-radius: 4px; overflow: hidden; margin: .8rem 0 .3rem; }
 .deposit-progress span { display: block; height: 100%; background: var(--vermietung); }
 .deposit-pay { margin-top: .5rem; }
+.deposit-letters { border-top: 1px solid var(--line); margin-top: 1rem; padding-top: .3rem; }

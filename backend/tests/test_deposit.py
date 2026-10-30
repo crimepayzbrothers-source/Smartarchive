@@ -67,3 +67,62 @@ def test_guarantee_insurance_cap_and_none(client):
     _put(client, tid, {"kind": "bar"}, 400)                    # Höhe fehlt
     _put(client, tid, {"kind": "gold", "amount_cents": 1}, 400)
     _put(client, tid, {"kind": "bar", "amount_cents": 1000, "returned_on": "2020-01-01"}, 400)  # vor Mietbeginn
+
+
+def _text(pdf: bytes) -> str:
+    import io
+    from pypdf import PdfReader
+    return " ".join(p.extract_text() for p in PdfReader(io.BytesIO(pdf)).pages)
+
+
+def test_deposit_reminder_cash_and_guarantee(client):
+    pid, units, t, acc = _setup(client)
+    client.put("/api/bk/landlord", json={"name": "Can Beispiel", "address": "Musterweg 1, 55566 Bad Sobernheim", "iban": "DE89 3704"},
+               headers=HEADERS)
+    tid = t["so"]
+    # Ohne erfasste Kaution kein Schreiben
+    r = client.post(f"/api/tenancies/{tid}/deposit/letters", json={"kind": "erinnerung", "letter_date": "2026-05-10",
+                                                                    "due_date": "2026-05-24"}, headers=HEADERS)
+    assert r.status_code == 400 and "erfassen" in r.json()["error"]
+
+    _put(client, tid, {"kind": "bar", "months": 3, "installments": True, "account": "Sparkasse, Kautionskonto DE11 2222"})
+    client.post(f"/api/tenancies/{tid}/deposit/payments", json={"paid_on": "2026-04-15", "amount_cents": 35000}, headers=HEADERS)
+    d = client.get(f"/api/tenancies/{tid}/deposit").json()
+    # Heute (30.10.2026) sind Rate 2 und 3 fällig und offen: 700 € = zwei Kaltmieten → rechnerische Schwelle § 569 Abs. 2a
+    assert d["remind"]["possible"] and d["remind"]["total"] == 70000 and d["remind"]["threshold"] is True
+
+    base = {"kind": "erinnerung", "letter_date": "2026-05-10", "due_date": "2026-05-24"}
+    pv = client.post(f"/api/tenancies/{tid}/deposit/letters/preview", json=base, headers=HEADERS)
+    txt = _text(pv.content)
+    # Zum Briefdatum 10.05. ist nur Rate 2 (fällig 06.05.) offen
+    assert "Zahlungserinnerung – Mietkaution" in txt and "2. Rate" in txt and "3. Rate" not in txt and "350,00 €" in txt
+    assert "drei monatlichen Teilzahlungen" in txt and "Kautionskonto DE11 2222" in txt and "24.05.2026" in txt
+    assert client.post(f"/api/tenancies/{tid}/deposit/letters", json={**base, "due_date": "2026-05-01"},
+                       headers=HEADERS).status_code == 400
+    # Vor Fälligkeit der 2. Rate ist nichts offen
+    r = client.post(f"/api/tenancies/{tid}/deposit/letters", json={**base, "letter_date": "2026-04-20", "due_date": "2026-05-01"},
+                    headers=HEADERS)
+    assert r.status_code == 400 and "nichts offen" in r.json()["error"]
+
+    d = client.post(f"/api/tenancies/{tid}/deposit/letters", json=base, headers=HEADERS).json()
+    assert [(x["kind"], x["total_cents"]) for x in d["letters"]] == [("erinnerung", 35000)]
+    d = client.post(f"/api/tenancies/{tid}/deposit/letters", json={"kind": "mahnung", "letter_date": "2026-06-20", "due_date": "2026-07-01"},
+                    headers=HEADERS).json()
+    m = d["letters"][0]
+    txt = _text(client.get(f"/api/deposit-letters/{m['id']}/pdf").content)
+    assert "Mahnung – Mietkaution" in txt and "Zahlungserinnerung vom 10.05.2026" in txt and "700,00 €" in txt
+    docs = client.get(f"/api/tenancies/{tid}").json()["documents"]
+    assert sorted(x["doc_type"] for x in docs) == ["Mahnung Kaution", "Zahlungserinnerung Kaution"]
+    d = client.delete(f"/api/deposit-letters/{m['id']}", headers=HEADERS).json()
+    assert len(d["letters"]) == 1
+
+    # Kautionsversicherung ohne Urkunde → Aufforderung zur Vorlage; mit Urkunde → nichts zu mahnen
+    tid2 = t["mm"]
+    _put(client, tid2, {"kind": "versicherung", "amount_cents": 150000, "provider": "Beispiel AG", "reference": "KV-9"})
+    pv = client.post(f"/api/tenancies/{tid2}/deposit/letters/preview", json={"kind": "erinnerung", "letter_date": "2026-10-30",
+                                                                             "due_date": "2026-11-13"}, headers=HEADERS)
+    txt = _text(pv.content)
+    txt = " ".join(txt.split())
+    assert "Form einer Kautionsversicherung (Beispiel AG, Nr. KV-9)" in txt and "Bürgschaftsurkunde" in txt and "13.11.2026" in txt
+    _put(client, tid2, {"kind": "versicherung", "amount_cents": 150000, "document_received_on": "2021-05-01"})
+    assert client.get(f"/api/tenancies/{tid2}/deposit").json()["remind"]["possible"] is False

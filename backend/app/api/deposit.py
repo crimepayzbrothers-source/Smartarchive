@@ -5,8 +5,11 @@ from pydantic import BaseModel, Field
 from starlette.requests import Request
 from starlette.routing import Route
 
-from .. import deposit
+from starlette.concurrency import run_in_threadpool
+
+from .. import deposit, deposit_letter
 from .common import ApiError, body, endpoint, path_int
+from .dunning import _pdf
 
 OPT_DATE = r"^(\d{4}-\d{2}-\d{2})?$"
 
@@ -32,9 +35,23 @@ class PaymentIn(BaseModel):
     note: str = Field(default="", max_length=200)
 
 
+class LetterIn(BaseModel):
+    kind: str = Field(pattern=r"^(erinnerung|mahnung)$")
+    letter_date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    due_date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    salutation: str = Field(default="", max_length=200)
+    extra_text: str = Field(default="", max_length=2000)
+
+
+def _full(conn, tid: int) -> dict:
+    out = deposit.get(conn, tid)
+    out.update(deposit_letter.state(conn, tid))
+    return out
+
+
 @endpoint()
 async def get_deposit(request: Request, conn, user):
-    return deposit.get(conn, path_int(request))
+    return _full(conn, path_int(request))
 
 
 @endpoint()
@@ -47,7 +64,7 @@ async def save_deposit(request: Request, conn, user):
         deposit.save(conn, tid, data)
     except deposit.DepositError as exc:
         raise ApiError(400, str(exc)) from None
-    return deposit.get(conn, tid)
+    return _full(conn, tid)
 
 
 @endpoint()
@@ -58,16 +75,53 @@ async def add_payment(request: Request, conn, user):
         deposit.add_payment(conn, tid, data.paid_on, data.amount_cents, data.note)
     except deposit.DepositError as exc:
         raise ApiError(400, str(exc)) from None
-    return deposit.get(conn, tid)
+    return _full(conn, tid)
 
 
 @endpoint()
 async def delete_payment(request: Request, conn, user):
     tid = deposit.delete_payment(conn, path_int(request))
-    return deposit.get(conn, tid)
+    return _full(conn, tid)
+
+
+@endpoint()
+async def letter_preview(request: Request, conn, user):
+    tid = path_int(request)
+    data = (await body(request, LetterIn)).model_dump()
+    try:
+        snap = deposit_letter.build(conn, tid, data)
+    except ValueError as exc:
+        raise ApiError(400, str(exc)) from None
+    return _pdf(await run_in_threadpool(deposit_letter.render, snap), "Kaution Vorschau.pdf")
+
+
+@endpoint()
+async def letter_create(request: Request, conn, user):
+    tid = path_int(request)
+    data = (await body(request, LetterIn)).model_dump()
+    try:
+        await run_in_threadpool(deposit_letter.create, conn, tid, data)
+    except ValueError as exc:
+        raise ApiError(400, str(exc)) from None
+    return _full(conn, tid)
+
+
+@endpoint()
+async def letter_pdf(request: Request, conn, user):
+    pdf, name = await run_in_threadpool(deposit_letter.pdf_of, conn, path_int(request))
+    return _pdf(pdf, name)
+
+
+@endpoint()
+async def letter_delete(request: Request, conn, user):
+    return _full(conn, deposit_letter.delete(conn, path_int(request)))
 
 
 routes = [
+    Route("/api/tenancies/{id:int}/deposit/letters/preview", letter_preview, methods=["POST"]),
+    Route("/api/tenancies/{id:int}/deposit/letters", letter_create, methods=["POST"]),
+    Route("/api/deposit-letters/{id:int}/pdf", letter_pdf, methods=["GET"]),
+    Route("/api/deposit-letters/{id:int}", letter_delete, methods=["DELETE"]),
     Route("/api/tenancies/{id:int}/deposit", get_deposit, methods=["GET"]),
     Route("/api/tenancies/{id:int}/deposit", save_deposit, methods=["PUT"]),
     Route("/api/tenancies/{id:int}/deposit/payments", add_payment, methods=["POST"]),

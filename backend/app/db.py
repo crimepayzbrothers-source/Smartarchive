@@ -508,6 +508,21 @@ MIGRATIONS: list[str] = [
     );
     CREATE INDEX idx_deposit_payments ON deposit_payments(tenancy_id);
     """,
+    # 17 – Zahlungserinnerung/Mahnung zur Mietkaution (Snapshot für unveränderte Reproduktion)
+    """
+    CREATE TABLE deposit_letters (
+        id INTEGER PRIMARY KEY,
+        tenancy_id INTEGER NOT NULL REFERENCES tenancies(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL CHECK (kind IN ('erinnerung', 'mahnung')),
+        letter_date TEXT NOT NULL,
+        due_date TEXT NOT NULL,
+        total_cents INTEGER NOT NULL,
+        snapshot TEXT NOT NULL,
+        document_id INTEGER REFERENCES documents(id) ON DELETE SET NULL,
+        created_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_deposit_letters ON deposit_letters(tenancy_id);
+    """,
 ]
 
 
