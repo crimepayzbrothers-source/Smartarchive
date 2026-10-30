@@ -480,6 +480,34 @@ MIGRATIONS: list[str] = [
     );
     CREATE INDEX idx_warning_tenancy ON warning_letters(tenancy_id);
     """,
+    # 16 – Mietkaution je Mietverhältnis (Art, Höhe, Raten, Urkunde, Rückgabe) und Einzahlungen
+    """
+    CREATE TABLE deposits (
+        tenancy_id INTEGER PRIMARY KEY REFERENCES tenancies(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL CHECK (kind IN ('bar', 'sparbuch', 'buergschaft', 'versicherung', 'keine')),
+        months REAL,                        -- vereinbart als Vielfaches der Nettokaltmiete (2, 3) oder NULL = eigener Betrag
+        amount_cents INTEGER NOT NULL DEFAULT 0,
+        installments INTEGER NOT NULL DEFAULT 0,   -- 1 = Zahlung in drei Raten (§ 551 Abs. 2 BGB)
+        account TEXT NOT NULL DEFAULT '',          -- Kautionskonto (Bank, IBAN) bzw. Sparbuch-Nr.
+        provider TEXT NOT NULL DEFAULT '',         -- Bank oder Versicherer der Bürgschaft
+        reference TEXT NOT NULL DEFAULT '',        -- Bürgschafts-/Policen-Nr.
+        document_received_on TEXT,                 -- Urkunde/Verpfändung liegt vor seit
+        returned_on TEXT,
+        returned_cents INTEGER,
+        retained_cents INTEGER,
+        note TEXT NOT NULL DEFAULT '',
+        updated_at TEXT NOT NULL
+    );
+    CREATE TABLE deposit_payments (
+        id INTEGER PRIMARY KEY,
+        tenancy_id INTEGER NOT NULL REFERENCES tenancies(id) ON DELETE CASCADE,
+        paid_on TEXT NOT NULL,
+        amount_cents INTEGER NOT NULL,
+        note TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_deposit_payments ON deposit_payments(tenancy_id);
+    """,
 ]
 
 

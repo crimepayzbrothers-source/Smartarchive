@@ -5,6 +5,7 @@ import { go, useLoad, useMeta, useToast, type Meta } from "../lib";
 import { BackButton, Empty, ErrorBox, Icon, Loading, Sheet } from "../components/ui";
 import { DunningPanel } from "./Dunning";
 import { WarningPanel } from "./Abmahnung";
+import { DepositPanel, DepositPill } from "./Deposit";
 
 export const STATUS_LABEL: Record<string, string> = { aktiv: "aktiv", kuenftig: "künftig", beendet: "beendet" };
 const STATUS_PILL: Record<string, string> = { aktiv: "bestaetigt", kuenftig: "entwurf", beendet: "" };
@@ -332,6 +333,7 @@ export function TenantsPage({ params }: { params: URLSearchParams }) {
               </div>
               <div className="tenant-side">
                 <span className={`status-pill ${STATUS_PILL[t.status]}`}>{STATUS_LABEL[t.status]}</span>
+                {t.status !== "beendet" && <DepositPill d={t.deposit} />}
                 {t.current_terms && <>
                   <strong className="small-num">{money(rentTotal(t.current_terms))}</strong>
                   <span className="muted small-num rent-parts"><span>Kalt {money(t.current_terms.cold_rent_cents)}</span><span>BK {money(t.current_terms.bk_advance_cents)}</span><span>HK {money(t.current_terms.hk_advance_cents)}</span></span>
@@ -453,6 +455,7 @@ export function TenancyPage({ id }: { id: number }) {
           {t.notes && <><h3>Notizen</h3><p className="notes">{t.notes}</p></>}
         </section>
       </div>
+      <DepositPanel tenancyId={t.id} />
       <DunningPanel tenancyId={t.id} onChanged={reload} />
       <WarningPanel tenancyId={t.id} onChanged={reload} />
       <TenancyDocuments t={t} onChanged={reload} />

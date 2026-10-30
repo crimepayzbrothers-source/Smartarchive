@@ -68,6 +68,9 @@ async def list_tenancies(request: Request, conn, user):
     q = (request.query_params.get("q") or "").strip().lower()
     if q:
         items = [t for t in items if q in f"{t['names']} {t['property_name']} {t['unit_name'] or ''}".lower()]
+    from .. import deposit  # spät importiert (deposit → abmahnung → income → tenancy)
+    for t in items:
+        t["deposit"] = deposit.brief(conn, t)
     return items
 
 

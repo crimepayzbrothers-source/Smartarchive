@@ -774,3 +774,10 @@ select.invalid, input.invalid { border-color: var(--danger); box-shadow: 0 0 0 3
 .chart-legend .lg.proven { background: var(--vermietung); }
 .chart-legend .lg.assumed { background: color-mix(in srgb, var(--vermietung) 40%, var(--surface)); }
 .chart-legend .lg.soll { height: 0; border-top: 2px dashed var(--ink-3); border-radius: 0; }
+
+/* Kaution */
+.deposit .facts > div { display: contents; }
+.deposit .panel-head h2 { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+.deposit-progress { height: 8px; background: var(--surface-2); border-radius: 4px; overflow: hidden; margin: .8rem 0 .3rem; }
+.deposit-progress span { display: block; height: 100%; background: var(--vermietung); }
+.deposit-pay { margin-top: .5rem; }
