@@ -5,7 +5,7 @@ import { useMeta, useToast, type Meta } from "../lib";
 import { Icon, sourceLabel } from "./ui";
 
 const KIND_LABEL: Record<string, string> = { ausgabe: "Ausgabe", einnahme: "Einnahme", ignoriert: "Ignorieren" };
-const SOURCE: Record<string, string> = { beleg: "Rechnung gefunden", history: "Bisherige Zuordnung", zweck: "Verwendungszweck", ai: "KI", keyword: "Stichwörter", user: "Von Ihnen" };
+const SOURCE: Record<string, string> = { beleg: "Rechnung gefunden", history: "Bisherige Zuordnung", zweck: "Verwendungszweck", mieter: "Mieter erkannt", ai: "KI", keyword: "Stichwörter", user: "Von Ihnen" };
 
 export function TxCard(props: { tx: any; onChanged: () => void }) {
   const { meta } = useMeta();
@@ -47,6 +47,10 @@ function TxCardInner({ tx, onChanged, meta }: { tx: any; onChanged: () => void; 
       Object.assign(body, { property_id: propertyId, unit_id: unitId, category_key: cat, amount_cents: cents });
     } else if (kind === "einnahme") {
       Object.assign(body, { property_id: propertyId, unit_id: unitId });
+      // Erkanntes Mietverhältnis übernehmen, solange Objekt und Wohnung nicht geändert wurden
+      const tid = tx.tenancy_id ?? s.tenancy_id;
+      const sameObject = propertyId === (tx.property_id ?? s.property_id) && (unitId ?? null) === ((tx.unit_id ?? s.unit_id) ?? null);
+      if (tid && sameObject) body.tenancy_id = tid;
     }
     setBusy(true);
     try {
@@ -87,7 +91,7 @@ function TxCardInner({ tx, onChanged, meta }: { tx: any; onChanged: () => void; 
         <>
           <p className="suggestion-target">
             {done && <span className="tx-state">{tx.kind === "ignoriert" ? "Ignoriert" : "Bestätigt"}</span>}
-            {KIND_LABEL[tx.kind]}{tx.property_name ? ` · ${tx.property_name}` : ""}{tx.kind === "ausgabe" && catLabel ? ` · ${catLabel}` : ""}
+            {KIND_LABEL[tx.kind]}{tx.property_name ? ` · ${tx.property_name}` : ""}{tx.kind === "ausgabe" && catLabel ? ` · ${catLabel}` : ""}{tx.kind === "einnahme" && tx.tenancy_names ? ` · ${tx.tenancy_names}` : ""}
             {tx.kind === "ausgabe" && tx.expense_amount && tx.expense_amount !== Math.abs(tx.amount_cents) ? ` · ${money(tx.expense_amount)} erfasst` : ""}
           </p>
           {tx.document_id && <a className="hint" href={`#/dokument/${tx.document_id}`}>Verknüpfte Rechnung: {tx.document_title || "ansehen"}</a>}

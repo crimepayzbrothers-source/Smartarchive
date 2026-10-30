@@ -16,7 +16,8 @@ from .common import ApiError, body, endpoint, int_param, path_int
 TX_SELECT = (
     "SELECT t.*, p.name AS property_name, u.name AS unit_name, a.name AS account_name, "
     "e.amount_cents AS expense_amount, e.status AS expense_status, e.payee AS expense_payee, e.origin AS expense_origin, "
-    "d.title AS document_title FROM transactions t JOIN bank_accounts a ON a.id = t.account_id "
+    "d.title AS document_title, (SELECT GROUP_CONCAT(TRIM(first_name || ' ' || last_name), ', ') FROM tenancy_parties tp "
+    "WHERE tp.tenancy_id = t.tenancy_id) AS tenancy_names FROM transactions t JOIN bank_accounts a ON a.id = t.account_id "
     "LEFT JOIN properties p ON p.id = t.property_id LEFT JOIN units u ON u.id = t.unit_id "
     "LEFT JOIN expenses e ON e.id = t.expense_id LEFT JOIN documents d ON d.id = t.document_id"
 )
@@ -136,6 +137,7 @@ class DecideIn(BaseModel):
     unit_id: int | None = None
     category_key: str | None = None
     expense_id: int | None = None
+    tenancy_id: int | None = None
     amount_cents: int | None = Field(default=None, gt=0)
     note: str | None = Field(default=None, max_length=1000)
 

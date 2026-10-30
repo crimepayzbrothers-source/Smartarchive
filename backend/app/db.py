@@ -422,6 +422,20 @@ MIGRATIONS: list[str] = [
     ALTER TABLE documents ADD COLUMN tenancy_id INTEGER REFERENCES tenancies(id) ON DELETE SET NULL;
     CREATE INDEX ix_documents_tenancy ON documents(tenancy_id);
     """,
+    # 12 – Einnahmen: Mieteingang ↔ Mietverhältnis, Barzahlungen und andere Eingänge außerhalb des Mietkontos
+    """
+    ALTER TABLE transactions ADD COLUMN tenancy_id INTEGER REFERENCES tenancies(id) ON DELETE SET NULL;
+    CREATE INDEX ix_tx_tenancy ON transactions(tenancy_id, booking_date);
+    CREATE TABLE rent_receipts (
+        id INTEGER PRIMARY KEY,
+        tenancy_id INTEGER NOT NULL REFERENCES tenancies(id) ON DELETE CASCADE,
+        paid_on TEXT NOT NULL,
+        amount_cents INTEGER NOT NULL,
+        for_month TEXT,
+        note TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL
+    );
+    """,
 ]
 
 

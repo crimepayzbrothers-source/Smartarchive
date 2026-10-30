@@ -11,6 +11,7 @@ import Inbox from "./pages/Inbox";
 import Transactions from "./pages/Transactions";
 import { TenancyPage, TenantsPage } from "./pages/Tenants";
 import { BkOverview, BkWizard } from "./pages/Betriebskosten";
+import Income from "./pages/Income";
 import Login from "./pages/Login";
 import { Properties, PropertyPage } from "./pages/Properties";
 import Settings from "./pages/Settings";
@@ -77,7 +78,7 @@ function Shell({ user, onLogout }: { user: any; onLogout: () => void }) {
   usePoll(true, loadBadge, 20000);
 
   const section = "/" + (path.split("/")[1] || "");
-  const active = (p: string) => (p === "/" ? section === "/" : section === p || (p === "/archiv" && (section === "/dokument" || section === "/suche")) || (p === "/objekte" && (section === "/objekt" || section === "/mieter" || section === "/betriebskosten")) || (p === "/ausgaben" && section === "/umsaetze"));
+  const active = (p: string) => (p === "/" ? section === "/" : section === p || (p === "/archiv" && (section === "/dokument" || section === "/suche")) || (p === "/objekte" && (section === "/objekt" || section === "/mieter" || section === "/betriebskosten" || section === "/einnahmen")) || (p === "/ausgaben" && section === "/umsaetze"));
   const area = path.startsWith("/archiv") && params.get("bereich") === "vermietung" ? "vermietung" : "auto";
 
   let page;
@@ -94,6 +95,7 @@ function Shell({ user, onLogout }: { user: any; onLogout: () => void }) {
   else if (path === "/umsaetze") page = <Transactions params={params} />;
   else if (path === "/mieter") page = <TenantsPage params={params} />;
   else if (path === "/betriebskosten") page = <BkOverview params={params} />;
+  else if (path === "/einnahmen") page = <Income params={params} />;
   else if (path === "/einstellungen") page = <Settings user={user} onLogout={onLogout} />;
   else page = <Home key={refresh} onCapture={() => setCapture(true)} />;
 

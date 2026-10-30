@@ -321,6 +321,24 @@ def _ai(conn: sqlite3.Connection, tx: dict[str, Any], props: list[dict]) -> dict
             "confidence": conf, "reason": (res.get("reason") or "Vorschlag der KI").strip()[:240]}
 
 
+def _tenant_match(conn: sqlite3.Connection, tx: dict[str, Any]) -> dict[str, Any] | None:
+    """Zahlungseingang einem Mietverhältnis zuordnen: Nachname eines Vertragspartners im Buchungstext.
+    Stimmt zusätzlich der Betrag mit der vereinbarten Monatsmiete überein, gilt die Zuordnung als sicher."""
+    from . import income, tenancy as tn
+    m = income.match_by_name(conn, f"{tx['counterparty']} {tx['purpose']}", tx["booking_date"])
+    if not m:
+        return None
+    t = tn.load(conn, m["id"])
+    y, mo = income.payment_month(tx["booking_date"])
+    soll = income.monthly_soll(t, y, mo)["total"]
+    exact = soll > 0 and tx["amount_cents"] == soll
+    return {"kind": "einnahme", "property_id": t["property_id"], "unit_id": t["unit_id"], "tenancy_id": t["id"], "source": "mieter",
+            "confidence": 0.95 if exact else 0.8,
+            "reason": f"Mieter {t['names']} ({t['property_name']}{', ' + t['unit_name'] if t['unit_name'] else ''}) im Buchungstext"
+                      + (f"; Betrag = vereinbarte Monatsmiete {soll / 100:.2f} €".replace(".", ",") if exact
+                         else f"; vereinbart sind {soll / 100:.2f} € – bitte prüfen".replace(".", ",") if soll else "") + "."}
+
+
 def analyze(conn: sqlite3.Connection, tx: dict[str, Any], use_ai: bool = True) -> dict[str, Any]:
     props = rows(conn.execute("SELECT id, name, address, keywords FROM properties WHERE archived = 0 ORDER BY id"))
     text = f"{tx['counterparty']} {tx['purpose']}"
@@ -339,9 +357,18 @@ def analyze(conn: sqlite3.Connection, tx: dict[str, Any], use_ai: bool = True) -
                     "candidates": [c["id"] for c in cands[:5]]})
         return sug
 
+    if tx["amount_cents"] > 0:
+        tm = _tenant_match(conn, tx)
+        if tm:
+            sug.update(tm)
+            return sug
+
     hist = _history(conn, tx)
     if hist:
         sug.update(hist)
+        if sug.get("kind") == "einnahme" and sug.get("property_id"):
+            from . import income
+            sug["tenancy_id"] = income.tenancy_for(conn, sug["property_id"], sug.get("unit_id"), tx["booking_date"])
         return sug
 
     ai = _ai(conn, tx, props) if use_ai and not interest else None
@@ -438,9 +465,12 @@ def auto_apply(conn: sqlite3.Connection, tx: dict[str, Any], sug: dict[str, Any]
             fields = {"kind": kind, "expense_id": eid, "property_id": sug.get("property_id"), "unit_id": sug.get("unit_id"),
                       "category_key": sug["category_key"]}
         elif kind in ("einnahme", "ignoriert"):
-            fields = {"kind": kind, "property_id": sug.get("property_id"), "unit_id": sug.get("unit_id")}
+            fields = {"kind": kind, "property_id": sug.get("property_id"), "unit_id": sug.get("unit_id"),
+                      "tenancy_id": sug.get("tenancy_id") if kind == "einnahme" else None}
         else:
             return "open"
+    elif conf >= threshold and sug.get("source") == "mieter":
+        fields = {"kind": "einnahme", "property_id": sug["property_id"], "unit_id": sug.get("unit_id"), "tenancy_id": sug["tenancy_id"]}
     else:
         return "open"
     fields.update({"status": "auto", "source": sug["source"], "confidence": conf, "reason": sug.get("reason", ""),
@@ -569,7 +599,17 @@ def decide(conn: sqlite3.Connection, tx_id: int, data: dict[str, Any]) -> dict[s
         raise BankImportError("Die Einheit gehört nicht zu diesem Objekt.")
     fields: dict[str, Any] = {"kind": kind, "property_id": property_id if kind != "ignoriert" else None,
                               "unit_id": unit_id if kind != "ignoriert" else None, "category_key": None,
-                              "expense_id": None, "document_id": None}
+                              "expense_id": None, "document_id": None, "tenancy_id": None}
+    if kind == "einnahme":
+        from . import income
+        tid = data.get("tenancy_id")
+        if tid:
+            t = row(conn.execute("SELECT property_id, unit_id FROM tenancies WHERE id = ?", (tid,)))
+            if not t:
+                raise BankImportError("Das Mietverhältnis existiert nicht.")
+            fields.update({"tenancy_id": tid, "property_id": t["property_id"], "unit_id": t["unit_id"]})
+        else:
+            fields["tenancy_id"] = income.tenancy_for(conn, property_id, unit_id, tx["booking_date"])
     if kind == "ausgabe":
         if tx["amount_cents"] >= 0:
             raise BankImportError("Ein Zahlungseingang kann keine Ausgabe sein.")
@@ -633,6 +673,6 @@ def undo(conn: sqlite3.Connection, tx_id: int) -> None:
     sug = json.loads(tx["suggestion"] or "{}")
     _release_expense(conn, tx, sug)
     sug.pop("paid_on_set", None)
-    conn.execute("UPDATE transactions SET status = 'open', kind = NULL, expense_id = NULL, document_id = NULL, decided_at = NULL, "
+    conn.execute("UPDATE transactions SET status = 'open', kind = NULL, expense_id = NULL, document_id = NULL, tenancy_id = NULL, decided_at = NULL, "
                  "suggestion = ?, updated_at = ? WHERE id = ?", (json.dumps(sug, ensure_ascii=False), now(), tx_id))
     audit(conn, "assignment_undone", "transaction", tx_id)

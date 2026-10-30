@@ -82,6 +82,7 @@ export function Properties() {
         <nav className="register small" aria-label="Ansicht">
           <button className="on">Objekte</button>
           <button onClick={() => go("/mieter")}>Mieter</button>
+          <button onClick={() => go("/einnahmen")}>Einnahmen</button>
           <button onClick={() => go("/betriebskosten")}>Betriebskosten</button>
         </nav>
         <button className="primary" onClick={() => setCreating(true)}><Icon name="plus" size={18} /> Objekt anlegen</button>

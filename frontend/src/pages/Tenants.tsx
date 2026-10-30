@@ -274,6 +274,7 @@ export function TenantsPage({ params }: { params: URLSearchParams }) {
         <nav className="register small" aria-label="Ansicht">
           <button onClick={() => go("/objekte")}>Objekte</button>
           <button className="on">Mieter</button>
+          <button onClick={() => go("/einnahmen")}>Einnahmen</button>
           <button onClick={() => go("/betriebskosten")}>Betriebskosten</button>
         </nav>
         <div className="row-actions">

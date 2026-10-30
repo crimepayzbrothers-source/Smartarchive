@@ -48,6 +48,7 @@ export function BkOverview({ params }: { params: URLSearchParams }) {
         <nav className="register small" aria-label="Ansicht">
           <button onClick={() => go("/objekte")}>Objekte</button>
           <button onClick={() => go("/mieter")}>Mieter</button>
+          <button onClick={() => go("/einnahmen")}>Einnahmen</button>
           <button className="on">Betriebskosten</button>
         </nav>
       </div>
