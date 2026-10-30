@@ -50,6 +50,7 @@ export const get = <T = any>(path: string, params?: Record<string, any>) => {
 export const post = <T = any>(path: string, body?: any) => api<T>(path, { method: "POST", body: body ?? {} });
 export const patch = <T = any>(path: string, body: any) => api<T>(path, { method: "PATCH", body });
 export const del = <T = any>(path: string) => api<T>(path, { method: "DELETE" });
+export const put = <T = any>(path: string, body: any) => api<T>(path, { method: "PUT", body });
 
 // Upload mit Fortschrittsanzeige (fetch kennt keinen Upload-Fortschritt)
 export function upload(form: FormData, onProgress: (p: number) => void): Promise<any> {

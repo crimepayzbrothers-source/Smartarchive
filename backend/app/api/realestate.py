@@ -121,6 +121,8 @@ async def update_unit(request: Request, conn, user):
 
 @endpoint()
 async def delete_unit(request: Request, conn, user):
+    if conn.execute("SELECT 1 FROM tenancies WHERE unit_id = ?", (path_int(request),)).fetchone():
+        raise ApiError(400, "Für diese Einheit gibt es Mietverhältnisse. Sie bleibt erhalten, damit die Historie nachvollziehbar ist.")
     conn.execute("DELETE FROM units WHERE id = ?", (path_int(request),))
     return {"ok": True}
 

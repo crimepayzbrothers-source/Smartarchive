@@ -310,6 +310,44 @@ MIGRATIONS: list[str] = [
     ALTER TABLE documents ADD COLUMN duplicate_of INTEGER REFERENCES documents(id) ON DELETE SET NULL;
     ALTER TABLE documents ADD COLUMN duplicate_reason TEXT;
     """,
+    # 9 – Mieterverwaltung: Mietverhältnisse (historisiert), Vertragspartner, Konditionen mit Gültigkeitsdatum
+    """
+    CREATE TABLE tenancies (
+        id INTEGER PRIMARY KEY,
+        property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE RESTRICT,
+        unit_id INTEGER REFERENCES units(id) ON DELETE RESTRICT,
+        contract_start TEXT NOT NULL,
+        move_in TEXT,
+        contract_end TEXT,
+        move_out TEXT,
+        umlage_notes TEXT NOT NULL DEFAULT '',
+        notes TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    CREATE INDEX ix_tenancy_object ON tenancies(property_id, unit_id, contract_start);
+    CREATE TABLE tenancy_parties (
+        id INTEGER PRIMARY KEY,
+        tenancy_id INTEGER NOT NULL REFERENCES tenancies(id) ON DELETE CASCADE,
+        first_name TEXT NOT NULL DEFAULT '',
+        last_name TEXT NOT NULL,
+        address TEXT NOT NULL DEFAULT '',
+        phone TEXT NOT NULL DEFAULT '',
+        email TEXT NOT NULL DEFAULT '',
+        sort INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE TABLE tenancy_terms (
+        id INTEGER PRIMARY KEY,
+        tenancy_id INTEGER NOT NULL REFERENCES tenancies(id) ON DELETE CASCADE,
+        valid_from TEXT NOT NULL,
+        cold_rent_cents INTEGER NOT NULL DEFAULT 0,
+        bk_advance_cents INTEGER NOT NULL DEFAULT 0,
+        hk_advance_cents INTEGER NOT NULL DEFAULT 0,
+        persons INTEGER,
+        note TEXT NOT NULL DEFAULT '',
+        UNIQUE (tenancy_id, valid_from)
+    );
+    """,
 ]
 
 

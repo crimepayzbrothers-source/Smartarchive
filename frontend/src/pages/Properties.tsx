@@ -2,6 +2,7 @@ import { useState } from "react";
 import { centsToInput, date, del, get, money, parseMoney, patch, post } from "../api";
 import { go, useLoad, useMeta, useToast } from "../lib";
 import { BackButton, Empty, ErrorBox, Icon, Loading, Sheet } from "../components/ui";
+import { OccupancyPanel } from "./Tenants";
 
 const EMPTY = { name: "", address: "", kind: "Eigentumswohnung", living_area: "", ownership_share: "", rental_status: "vermietet",
   acquired_on: "", acquisition_cost: "", keywords: "", notes: "" };
@@ -75,7 +76,10 @@ export function Properties() {
   return (
     <div className="page properties">
       <div className="page-head">
-        <h1 className="page-title">Mietobjekte</h1>
+        <nav className="register small" aria-label="Ansicht">
+          <button className="on">Objekte</button>
+          <button onClick={() => go("/mieter")}>Mieter</button>
+        </nav>
         <button className="primary" onClick={() => setCreating(true)}><Icon name="plus" size={18} /> Objekt anlegen</button>
       </div>
       {data.properties.length === 0 ? (
@@ -132,7 +136,18 @@ export function PropertyPage({ id }: { id: number }) {
   };
   const removeUnit = async (uid: number) => {
     if (!confirm("Einheit löschen? Zuordnungen von Dokumenten und Ausgaben werden entfernt.")) return;
-    await del(`/api/units/${uid}`);
+    try {
+      await del(`/api/units/${uid}`);
+    } catch (e: any) {
+      return toast({ kind: "error", text: e.message });
+    }
+    reloadMeta();
+    reload();
+  };
+  const setArea = async (uid: number, raw: string) => {
+    const v = raw.trim() ? Number(raw.replace(",", ".")) : null;
+    if (v !== null && (Number.isNaN(v) || v < 0)) return toast({ kind: "error", text: "Wohnfläche ist ungültig." });
+    await patch(`/api/units/${uid}`, { living_area: v });
     reloadMeta();
     reload();
   };
@@ -170,7 +185,11 @@ export function PropertyPage({ id }: { id: number }) {
           {p.units.length === 0 && <p className="muted">Keine Einheiten – Ausgaben gelten für das ganze Objekt.</p>}
           <ul className="unit-list">
             {p.units.map((u: any) => (
-              <li key={u.id}><span>{u.name}</span><button className="icon-btn" aria-label="Löschen" onClick={() => removeUnit(u.id)}><Icon name="trash" size={16} /></button></li>
+              <li key={u.id}><span>{u.name}</span>
+                <label className="unit-area"><input inputMode="decimal" defaultValue={u.living_area != null ? String(u.living_area).replace(".", ",") : ""}
+                  onBlur={(e) => e.target.value !== (u.living_area != null ? String(u.living_area).replace(".", ",") : "") && setArea(u.id, e.target.value)}
+                  aria-label={`Wohnfläche ${u.name}`} placeholder="–" /> m²</label>
+                <button className="icon-btn" aria-label="Löschen" onClick={() => removeUnit(u.id)}><Icon name="trash" size={16} /></button></li>
             ))}
           </ul>
           <div className="inline-add">
@@ -193,6 +212,7 @@ export function PropertyPage({ id }: { id: number }) {
           </ul>
         </section>
       </div>
+      <OccupancyPanel propertyId={id} />
       <button className="danger-link" onClick={archive}><Icon name="archive" size={18} /> Objekt archivieren</button>
 
       <Sheet open={editing} onClose={() => setEditing(false)} title="Objekt bearbeiten">

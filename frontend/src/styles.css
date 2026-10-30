@@ -523,3 +523,41 @@ dialog.scanner::backdrop { background: #0b1013; }
 .tx-open > .link { align-self: flex-end; }
 .transactions .segmented { margin: 0; }
 .bank-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+
+/* Mieterverwaltung */
+.page-head .register { margin: 0; }
+.page-head .register button { border-bottom: 1px solid var(--line); border-radius: 10px; }
+.sub-line { display: block; font-size: .84rem; }
+.tenant-list { display: flex; flex-direction: column; gap: .5rem; }
+.tenant-card { display: flex; justify-content: space-between; gap: .75rem; align-items: flex-start; background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--vermietung); border-radius: var(--radius); padding: .8rem .95rem; color: var(--ink); box-shadow: var(--shadow); }
+.tenant-card:hover { text-decoration: none; border-color: var(--vermietung); }
+.tenant-card.beendet { border-left-color: var(--line); }
+.tenant-card.kuenftig { border-left-color: var(--ochre); }
+.tenant-main { display: flex; flex-direction: column; min-width: 0; gap: .1rem; }
+.tenant-main strong { overflow-wrap: anywhere; }
+.tenant-main .muted, .small-num { font-size: .84rem; }
+.tenant-side { display: flex; flex-direction: column; align-items: flex-end; gap: .3rem; text-align: right; }
+.small-num { font-variant-numeric: tabular-nums; }
+.form-block { border: 1px solid var(--line); border-radius: var(--radius); padding: .8rem .9rem .95rem; margin: 0; display: flex; flex-direction: column; gap: .7rem; }
+.form-block legend { font-weight: 650; padding: 0 .3rem; color: var(--ink); }
+.party-row, .term-row { padding-bottom: .7rem; border-bottom: 1px dashed var(--line); }
+.party-row:last-of-type, .term-row:last-of-type { border-bottom: 0; padding-bottom: 0; }
+.form .remove { justify-self: start; color: var(--danger); }
+table.terms-table { width: 100%; border-collapse: collapse; font-size: .88rem; font-variant-numeric: tabular-nums; }
+.terms-table th { text-align: left; font-weight: 600; color: var(--ink-3); font-size: .78rem; padding: .3rem .4rem; border-bottom: 1px solid var(--line); }
+.terms-table td { padding: .45rem .4rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+.terms-table tr.current td { background: var(--vermietung-soft); }
+.unit-area { display: inline-flex; align-items: center; gap: .3rem; margin-left: auto; font-size: .85rem; color: var(--ink-3); }
+.unit-area input { width: 5.5rem; text-align: right; padding: .35rem .5rem; min-height: 34px; }
+.occupancy { margin-top: 1rem; display: flex; flex-direction: column; gap: 1rem; }
+.occupancy .panel-head select { width: auto; }
+.occ-unit { display: flex; flex-direction: column; gap: .4rem; padding-top: .8rem; border-top: 1px solid var(--line); }
+.occ-unit:first-of-type { border-top: 0; padding-top: 0; }
+.occ-head { display: flex; justify-content: space-between; gap: .75rem; flex-wrap: wrap; font-size: .92rem; }
+.occ-bar { display: flex; height: 14px; border-radius: 99px; overflow: hidden; gap: 2px; background: var(--surface-2); }
+.occ-bar span { min-width: 3px; }
+.occ-bar .let { background: var(--vermietung); }
+.occ-bar .vacant { background: repeating-linear-gradient(135deg, var(--surface-2) 0 5px, var(--line) 5px 9px); }
+.occ-legend { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .15rem; font-size: .86rem; }
+.occ-legend li { display: flex; justify-content: space-between; gap: .75rem; flex-wrap: wrap; }
+@media (min-width: 720px) { .party-row.form.grid, .term-row.form.grid { grid-template-columns: 1fr 1fr; } }
