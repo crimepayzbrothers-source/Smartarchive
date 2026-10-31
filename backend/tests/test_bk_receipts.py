@@ -177,3 +177,17 @@ def test_hide_irrelevant_receipts(client):
     assert r.json() == [] and len(client.get(f"/api/bk/periods/{period}/receipt-scan").json()) == 1
     # Fremder Beleg wird abgelehnt
     assert client.put(f"/api/bk/periods/{period}/receipt-hidden", json={"document_id": 9999}, headers=HEADERS).status_code == 400
+
+
+def test_confirm_single_position_is_verified(client):
+    pid, units, t, period = _setup(client)
+    doc = client.post("/api/upload", data={"area": "vermietung", "property_id": str(pid)},
+                      files=[("files", ("abgaben.pdf", make_pdf(BESCHEID), "application/pdf"))], headers=HEADERS).json()["created"][0]
+    run_worker()
+    p = client.get(f"/api/bk/periods/{period}/receipt-scan").json()[0]["positions"][1]   # Abfall 186,00
+    out = client.post(f"/api/bk/periods/{period}/receipt-scan/import",
+                      json={"items": [{"document_id": doc, "cost_type": "muell", "amount_cents": 18000, "evidence": p["evidence"],
+                                       "verified": True}]}, headers=HEADERS).json()
+    item = next(l for l in out["lines"] if l["cost_type"] == "muell")["items"][0]
+    assert item["amount_cents"] == 18000 and item["verified_at"] and item["document_id"] == doc
+    assert out["receipts"]["unverified"] == 0 and "ungeprueft" not in [i["code"] for i in out["issues"]]

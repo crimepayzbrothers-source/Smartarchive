@@ -828,3 +828,4 @@ select.invalid, input.invalid { border-color: var(--danger); box-shadow: 0 0 0 3
 .receipt-scan .swipe-front { background: var(--surface-2); }
 .hidden-receipts { margin-top: .8rem; font-size: .9rem; }
 .hidden-receipts summary { cursor: pointer; color: var(--petrol); font-weight: 560; }
+.scan-pos .confirm-pos { margin-left: auto; display: inline-flex; align-items: center; gap: .3rem; }

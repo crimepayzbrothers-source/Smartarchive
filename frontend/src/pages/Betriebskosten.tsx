@@ -390,12 +390,20 @@ function ReceiptScan({ periodId, period, meta, query, onClose, onSaved }: { peri
       const r = await post(`/api/bk/periods/${periodId}/receipt-scan/import`, { items });
       const keys = items.map((i) => `${i.document_id}:${i.evidence}`);
       setSel((cur) => { const n = { ...cur }; keys.forEach((k) => { if (n[k]) n[k] = { ...n[k], on: false }; }); return n; });
-      toast({ kind: "ok", text: r.imported ? `${r.imported} Position${r.imported === 1 ? "" : "en"} gespeichert – bitte mit dem Beleg abgleichen.`
-        : "Bereits gespeichert." });
+      const confirmed = items.every((i) => i.verified);
+      toast({ kind: "ok", text: !r.imported ? "Bereits gespeichert."
+        : confirmed ? `Bestätigt: ${money(items[0].amount_cents)} in die Abrechnung übernommen.`
+          : `${r.imported} Position${r.imported === 1 ? "" : "en"} gespeichert – bitte mit dem Beleg abgleichen.` });
       onSaved(r);
       reload(); setHitsRev((x) => x + 1);
     } catch (e: any) { toast({ kind: "error", text: e.message }); }
     finally { setBusy(false); }
+  };
+  // Einzelne Position bestätigen: mit angezeigtem Betrag und gewählter Kostenart sofort speichern, gilt als von Ihnen geprüft
+  const confirmOne = (doc: any, p: any, v: any) => {
+    const amount = parseMoney(v.amount || "");
+    if (!amount) return toast({ kind: "error", text: "Bitte zuerst einen Betrag eintragen." });
+    save([{ document_id: doc.document_id, cost_type: v.cost_type || p.cost_type, amount_cents: amount, evidence: p.evidence, verified: true }]);
   };
   const addLine = (doc: any, l: any, amount: number) => {
     const ct = l.cost_type && l.cost_type !== "nicht_umlagefaehig" ? l.cost_type : l.cost_type || doc.positions[0]?.cost_type || "sonstige";
@@ -444,6 +452,8 @@ function ReceiptScan({ periodId, period, meta, query, onClose, onSaved }: { peri
                 </select>
                 <input className="amount" inputMode="decimal" value={v.amount ?? ""} onChange={(e) => upd(k, { amount: e.target.value })} placeholder="Betrag" aria-label="Betrag" />
                 {p.confidence === "hoch" ? <span className="status-pill bestaetigt">passt zur Summe</span> : <span className="status-pill entwurf">prüfen</span>}
+                <button type="button" className="primary small confirm-pos" disabled={busy || !parseMoney(v.amount || "")}
+                  onClick={() => confirmOne(doc, p, v)}><Icon name="check" size={15} /> Bestätigen</button>
               </li>
             );
           })}

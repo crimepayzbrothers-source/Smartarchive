@@ -339,7 +339,9 @@ def import_positions(conn: sqlite3.Connection, period_id: int, items: list[dict[
         cid = bk.add_cost(conn, period_id, {"cost_type": it.get("cost_type"), "amount_cents": amount, "document_id": doc["document_id"],
                                             "invoice_date": doc["doc_date"],
                                             "description": " – ".join(x for x in (doc["correspondent"] or doc["title"], label) if x)[:300]})
-        conn.execute("UPDATE bk_costs SET origin = 'beleg', evidence = ?, verified_at = NULL WHERE id = ?", (evidence, cid))
+        # „Bestätigen“ in der Trefferanzeige: Sie haben Betrag und Kostenart ausdrücklich bestätigt → gilt als geprüft
+        conn.execute("UPDATE bk_costs SET origin = 'beleg', evidence = ?, verified_at = ? WHERE id = ?",
+                     (evidence, now() if it.get("verified") else None, cid))
         n += 1
     return n
 
