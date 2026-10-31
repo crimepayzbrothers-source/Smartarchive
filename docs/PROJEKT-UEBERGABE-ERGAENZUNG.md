@@ -97,7 +97,7 @@
 - **Hinweistexte** (reine Hinweise): Darlehen „nur der Zinsanteil ist Werbungskosten“, Hausgeld „Zuführung zur Erhaltungsrücklage erst bei Verwendung abziehbar“ **[Alt-Ü]**.
 - Mehrere erfasste Rechnungen gleichen Betrags führen zur Rückfrage. Eindeutig ist ein Treffer erst bei ≥ 0,1 Abstand zum zweitbesten. Gibt es genau ein Objekt, wird es vorgeschlagen **[Alt-Ü]**.
 - **Mieter-Zuordnung:** gilt nur für Eingänge. Eine Einnahme-Entscheidung setzt `tenancy_id`, Rückgängig entfernt sie. Wird nur Objekt und Wohnung gewählt, findet die App das Mietverhältnis selbst über die Wohnung und das Datum (`income.tenancy_for`).
-- `income.match_by_name` berücksichtigt Mietverhältnisse bis **40 Tage nach Ende** (Nachzahlungen).
+- `income.match_by_name` und `tenancy_for` berücksichtigen Zahlungen von **10 Tagen vor Mietbeginn bis 40 Tage nach Mietende** (Vorauszahlung, Nachzahlungen).
 
 ### C.2 Einnahmen **[Code]**
 
