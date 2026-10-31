@@ -1,6 +1,7 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent } from "react";
 import { get } from "../api";
-import { replaceRoute, takeScroll, useMeta } from "../lib";
+import { replaceRoute, takeScroll, useMeta, useToast } from "../lib";
+import { canShareFiles, fetchDocFile, shareFiles } from "../components/shareDocs";
 import { DocRow, Empty, ErrorBox, Icon, Loading, type DocItem } from "../components/ui";
 
 const YEARS = (() => {
@@ -12,6 +13,7 @@ const YEARS = (() => {
 // statt leer neu zu laden; danach wird sie still aktualisiert.
 type ListCache = { key: string; items: DocItem[]; total: number; hint: string | null };
 let listCache: ListCache | null = null;
+const MAX_PICK = 50;
 const num = (v: string | null) => (v && /^\d+$/.test(v) ? Number(v) : null);
 
 export default function Archive({ params, searchMode = false }: { params: URLSearchParams; searchMode?: boolean }) {
@@ -39,6 +41,50 @@ export default function Archive({ params, searchMode = false }: { params: URLSea
   const [loading, setLoading] = useState(!restored);
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const toast = useToast();
+
+  // Mehrfachauswahl: mehrere Dokumente gemeinsam teilen (E-Mail, WhatsApp …) oder als ZIP laden
+  const [selecting, setSelecting] = useState(false);
+  const [picked, setPicked] = useState<number[]>([]);
+  const [sharing, setSharing] = useState(false);
+  const [ready, setReady] = useState<File[] | null>(null);
+  const pressTimer = useRef<number | null>(null);
+  const pressed = useRef(false);
+  const toggle = (id: number) => { setReady(null); setPicked((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : cur.length >= MAX_PICK ? cur : [...cur, id])); };
+  const stopSelect = () => { setSelecting(false); setPicked([]); setReady(null); };
+  const startPress = (id: number) => {
+    pressed.current = false;
+    pressTimer.current = window.setTimeout(() => { pressed.current = true; pressTimer.current = null; setSelecting(true); toggle(id); navigator.vibrate?.(15); }, 500);
+  };
+  const cancelPress = () => { if (pressTimer.current) { clearTimeout(pressTimer.current); pressTimer.current = null; } };
+  const onPickClick = (e: MouseEvent, id: number) => {
+    if (pressed.current) { pressed.current = false; e.preventDefault(); e.stopPropagation(); return; }  // langes Drücken: kein Öffnen
+    if (!selecting) return;
+    e.preventDefault(); e.stopPropagation();
+    toggle(id);
+  };
+  const shareSelected = async () => {
+    setSharing(true);
+    try {
+      let files = ready;
+      if (!files) {
+        files = [];
+        for (const id of picked) files.push(await fetchDocFile(id, items.find((d) => d.id === id)?.title));
+      }
+      if (!canShareFiles(files)) {
+        toast({ kind: "error", text: "Dieses Gerät kann mehrere Dateien nicht direkt teilen – bitte „ZIP“ verwenden." });
+        return;
+      }
+      const r = await shareFiles(files, `${files.length} Dokumente`);
+      if (r === "again") { setReady(files); toast({ kind: "ok", text: "Dateien sind bereit – bitte noch einmal auf „Jetzt teilen“ tippen." }); return; }
+      setReady(null);
+      if (r === "ok") stopSelect();
+    } catch (e: any) {
+      toast({ kind: "error", text: e.message || "Teilen fehlgeschlagen." });
+    } finally {
+      setSharing(false);
+    }
+  };
   const first = useRef(true);
 
   // Tastatur nur bei leerer Suche öffnen, nicht bei der Rückkehr zu Treffern.
@@ -154,12 +200,33 @@ export default function Archive({ params, searchMode = false }: { params: URLSea
             : <Empty icon="archive" title="Dieser Ordner ist leer">Dokumente landen hier, sobald sie abgelegt sind.</Empty>
         ) : (
           <>
-            <p className="result-count">{total} {total === 1 ? "Dokument" : "Dokumente"}</p>
-            <div className="doc-list">{items.map((d) => <DocRow key={d.id} doc={d} showArea={!area} />)}</div>
+            <div className="result-head">
+              <p className="result-count">{total} {total === 1 ? "Dokument" : "Dokumente"}</p>
+              <button className="ghost small" onClick={() => (selecting ? stopSelect() : setSelecting(true))}>{selecting ? "Fertig" : "Auswählen"}</button>
+            </div>
+            {selecting && !picked.length && <p className="hint">Dokumente antippen, um sie auszuwählen. Tipp: Langes Drücken startet die Auswahl direkt.</p>}
+            <div className={`doc-list ${selecting ? "selecting" : ""}`}>{items.map((d) => (
+              <div key={d.id} className={`pick-wrap ${picked.includes(d.id) ? "picked" : ""}`} onClickCapture={(e) => onPickClick(e, d.id)}
+                onPointerDown={() => startPress(d.id)} onPointerUp={cancelPress} onPointerLeave={cancelPress} onPointerCancel={cancelPress}
+                onContextMenu={(e) => { if (pressTimer.current || selecting) e.preventDefault(); }}>
+                {selecting && <span className="pick-box" aria-hidden="true">{picked.includes(d.id) && <Icon name="check" size={16} />}</span>}
+                <DocRow doc={d} showArea={!area} />
+              </div>
+            ))}</div>
             {items.length < total && <button className="secondary block" disabled={loading} onClick={() => load(items.length)}>Weitere laden</button>}
           </>
         )}
       </div>
+      {selecting && picked.length > 0 && (
+        <div className="pick-bar" role="toolbar" aria-label="Auswahl">
+          <span className="pick-count">{picked.length} ausgewählt</span>
+          <button className="ghost small" onClick={() => setPicked(picked.length === items.length ? [] : items.map((d) => d.id).slice(0, MAX_PICK))}>
+            {picked.length === items.length ? "Keine" : "Alle"}</button>
+          <a className="secondary small btn-link" href={`/api/documents/bundle.zip?ids=${picked.join(",")}`}>ZIP</a>
+          <button className="primary small" disabled={sharing} onClick={shareSelected}>
+            <Icon name="share" size={16} /> {sharing ? "Lädt …" : ready ? "Jetzt teilen" : "Teilen"}</button>
+        </div>
+      )}
     </div>
   );
 }

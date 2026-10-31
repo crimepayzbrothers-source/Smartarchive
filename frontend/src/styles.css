@@ -809,3 +809,17 @@ select.invalid, input.invalid { border-color: var(--danger); box-shadow: 0 0 0 3
 .panel > .bk-search { margin: .2rem 0 .6rem; }
 .scan-pos.saved { opacity: .85; }
 .scan-pos.saved .bk-evidence { flex: 1 1 100%; }
+
+/* Mehrfachauswahl im Archiv */
+.result-head { display: flex; justify-content: space-between; align-items: center; gap: .5rem; }
+.pick-wrap { position: relative; -webkit-touch-callout: none; }
+.doc-list.selecting .pick-wrap { user-select: none; }
+.pick-box { position: absolute; z-index: 2; left: .55rem; top: .55rem; width: 24px; height: 24px; border-radius: 6px; border: 2px solid var(--ink-3);
+  background: var(--surface); display: grid; place-items: center; color: var(--on-petrol); pointer-events: none; }
+.pick-wrap.picked .pick-box { background: var(--petrol); border-color: var(--petrol); }
+.pick-wrap.picked .doc-row { outline: 2px solid var(--petrol); outline-offset: -2px; }
+.pick-bar { position: fixed; z-index: 31; left: 50%; transform: translateX(-50%); bottom: calc(var(--nav-h) + .6rem + env(safe-area-inset-bottom));
+  width: min(94vw, 520px); display: flex; align-items: center; gap: .45rem; padding: .55rem .7rem; background: var(--surface);
+  border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 8px 24px -10px rgba(0,0,0,.35); }
+.pick-count { flex: 1; font-weight: 600; font-size: .92rem; }
+.doc-list.selecting { padding-bottom: 4.5rem; }

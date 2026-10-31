@@ -597,6 +597,50 @@ async def get_file(request: Request, conn, user):
                         content_disposition_type="attachment" if download else "inline", headers=_SECURE_HEADERS)
 
 
+MAX_BUNDLE = 50
+
+
+@endpoint()
+async def bundle_zip(request: Request, conn, user):
+    """Mehrere Dokumente als ZIP (Ersatz, wenn das Gerät nicht mehrere Dateien teilen kann, z. B. am PC)."""
+    import io
+    import zipfile
+    from urllib.parse import quote
+    try:
+        ids = [int(x) for x in (request.query_params.get("ids") or "").split(",") if x.strip()]
+    except ValueError:
+        raise ApiError(400, "Ungültige Auswahl.") from None
+    ids = list(dict.fromkeys(ids))
+    if not ids:
+        raise ApiError(400, "Bitte Dokumente auswählen.")
+    if len(ids) > MAX_BUNDLE:
+        raise ApiError(400, f"Höchstens {MAX_BUNDLE} Dokumente auf einmal.")
+
+    def build() -> bytes:
+        buf, used = io.BytesIO(), set()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+            for doc_id in ids:
+                if not conn.execute("SELECT 1 FROM documents WHERE id = ? AND deleted_at IS NULL", (doc_id,)).fetchone():
+                    continue
+                f = documents.best_pdf(conn, doc_id)
+                if not f:
+                    continue
+                name = documents.display_filename(conn, doc_id)
+                stem, dot, ext = name.rpartition(".")
+                base, n = name, 2
+                while name.lower() in used:
+                    name = f"{stem or base} ({n}){dot}{ext}" if dot else f"{base} ({n})"
+                    n += 1
+                used.add(name.lower())
+                z.write(storage.abs_path(f["path"]), name)
+        return buf.getvalue()
+    data = await run_in_threadpool(build)
+    audit(conn, "exported", "documents", None, {"anzahl": len(ids), "format": "zip"})
+    fname = f"SmartArchive_{len(ids)}_Dokumente.zip"
+    return Response(data, media_type="application/zip",
+                    headers={**_SECURE_HEADERS, "Content-Disposition": f"attachment; filename*=UTF-8''{quote(fname)}", "Cache-Control": "no-store"})
+
+
 @endpoint()
 async def get_thumb(request: Request, conn, user):
     files = documents.files_of(conn, path_int(request), "thumb")
@@ -625,6 +669,7 @@ async def get_page(request: Request, conn, user):
 routes = [
     Route("/api/upload", upload, methods=["POST"]),
     Route("/api/documents", list_documents, methods=["GET"]),
+    Route("/api/documents/bundle.zip", bundle_zip, methods=["GET"]),
     Route("/api/inbox", inbox, methods=["GET"]),
     Route("/api/documents/{id:int}", get_document, methods=["GET"]),
     Route("/api/documents/{id:int}", patch_document, methods=["PATCH"]),
