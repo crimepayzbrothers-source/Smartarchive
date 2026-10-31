@@ -271,30 +271,31 @@ function useAction(onChange: (d: any) => void) {
 }
 
 // Belegprüfung: Archivbelege des Objekts per Volltext auswerten (Abgabenbescheide zeilenweise zerlegen)
-function ReceiptScan({ periodId, period, meta, query, onClose, onImported }: { periodId: number; period: any; meta: BkMeta; query: string;
-  onClose: () => void; onImported: (r: any) => void }) {
+function ReceiptScan({ periodId, period, meta, query, onClose, onSaved }: { periodId: number; period: any; meta: BkMeta; query: string;
+  onClose: () => void; onSaved: (r: any) => void }) {
   const toast = useToast();
   const SEL_KEY = `sa-bk-sel-${periodId}`;
-  const { data, error } = useLoad(() => get<any[]>(`/api/bk/periods/${periodId}/receipt-scan`), [periodId]);
+  const { data, error, reload } = useLoad(() => get<any[]>(`/api/bk/periods/${periodId}/receipt-scan`), [periodId]);
   const [hits, setHits] = useState<any>(null);
-  const [extra, setExtra] = useState<Record<number, any[]>>({});  // zusätzlich aus einzelnen Belegzeilen übernommene Beträge
-  const [sel, setSel] = useState<Record<string, any>>(() => { try { return JSON.parse(sessionStorage.getItem(SEL_KEY) || "{}"); } catch { return {}; } });
+  const [hitsRev, setHitsRev] = useState(0);
+  // Auswahl und geänderte Beträge bis zum Speichern auf dem Gerät gemerkt (auch nach dem Öffnen eines Belegs oder einem Neustart)
+  const [sel, setSel] = useState<Record<string, any>>(() => { try { return JSON.parse(localStorage.getItem(SEL_KEY) || "{}"); } catch { return {}; } });
   const [busy, setBusy] = useState(false);
-  const withExtra = (doc: any) => ({ ...doc, positions: [...doc.positions, ...(extra[doc.document_id] || [])] });
-  const hitDocs: any[] = (hits?.results || []).filter((h: any) => !h.linked).map(withExtra);
-  const docs: any[] = [...(data || []).filter((x) => !hitDocs.some((h) => h.document_id === x.document_id)).map(withExtra), ...hitDocs];
+  const keyOf = (doc: any, p: any) => `${doc.document_id}:${p.evidence}`;
+  const hitDocs: any[] = (hits?.results || []).filter((h: any) => !h.linked);
+  const docs: any[] = [...(data || []).filter((x) => !hitDocs.some((h) => h.document_id === x.document_id)), ...hitDocs];
   useEffect(() => {  // Vorbelegung für neue Belege, gemerkte Auswahl bleibt
     if (!docs.length) return;
     const next = { ...sel };
     let changed = false;
-    docs.forEach((doc) => doc.positions.forEach((p: any, i: number) => {
-      const k = `${doc.document_id}:${i}`;
-      if (!next[k]) { next[k] = { on: !!data?.some((x) => x.document_id === doc.document_id) && p.amount_cents != null, cost_type: p.cost_type,
+    docs.forEach((doc) => doc.positions.forEach((p: any) => {
+      const k = keyOf(doc, p);
+      if (!next[k]) { next[k] = { on: !p.adopted && !!data?.some((x) => x.document_id === doc.document_id) && p.amount_cents != null, cost_type: p.cost_type,
         amount: p.amount_cents != null ? centsToInput(p.amount_cents) : "" }; changed = true; }
     }));
     if (changed) setSel(next);
-  }, [data, hits, extra]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { try { sessionStorage.setItem(SEL_KEY, JSON.stringify(sel)); } catch { /* privat */ } }, [sel, SEL_KEY]);
+  }, [data, hits]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { try { localStorage.setItem(SEL_KEY, JSON.stringify(sel)); } catch { /* privat */ } }, [sel, SEL_KEY]);
   useEffect(() => { if (data) restoreScroll(); }, [data, hits]);
   useEffect(() => {
     if (!query.trim()) { setHits(null); return; }
@@ -302,29 +303,32 @@ function ReceiptScan({ periodId, period, meta, query, onClose, onImported }: { p
     get(`/api/bk/periods/${periodId}/receipt-search`, { q: query }).then((r) => live && setHits(r))
       .catch((e: any) => toast({ kind: "error", text: e.message }));
     return () => { live = false; };
-  }, [query, periodId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [query, periodId, hitsRev]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Speichern = sofort dauerhaft in der Abrechnung; danach Belegliste und Treffer neu laden (gespeicherte Positionen markiert)
+  const save = async (items: any[]) => {
+    setBusy(true);
+    try {
+      const r = await post(`/api/bk/periods/${periodId}/receipt-scan/import`, { items });
+      const keys = items.map((i) => `${i.document_id}:${i.evidence}`);
+      setSel((cur) => { const n = { ...cur }; keys.forEach((k) => { if (n[k]) n[k] = { ...n[k], on: false }; }); return n; });
+      toast({ kind: "ok", text: r.imported ? `${r.imported} Position${r.imported === 1 ? "" : "en"} gespeichert – bitte mit dem Beleg abgleichen.`
+        : "Bereits gespeichert." });
+      onSaved(r);
+      reload(); setHitsRev((x) => x + 1);
+    } catch (e: any) { toast({ kind: "error", text: e.message }); }
+    finally { setBusy(false); }
+  };
   const addLine = (doc: any, l: any, amount: number) => {
-    const ct = l.cost_type || doc.positions[0]?.cost_type || "sonstige";
-    const list = extra[doc.document_id] || [];
-    const idx = doc.positions.length;  // Index der neuen Position (Vorschläge + bisherige Zusatzpositionen)
-    const k = `${doc.document_id}:${idx}`;
-    setExtra({ ...extra, [doc.document_id]: [...list, { cost_type: ct, amount_cents: amount, evidence: l.text, note: "aus Belegzeile übernommen", confidence: "pruefen" }] });
-    setSel({ ...sel, [k]: { on: true, cost_type: ct, amount: centsToInput(amount) } });
+    const ct = l.cost_type && l.cost_type !== "nicht_umlagefaehig" ? l.cost_type : l.cost_type || doc.positions[0]?.cost_type || "sonstige";
+    save([{ document_id: doc.document_id, cost_type: ct, amount_cents: amount, evidence: l.text }]);
   };
   const upd = (k: string, patchv: any) => setSel({ ...sel, [k]: { ...sel[k], ...patchv } });
-  const chosen = docs.flatMap((doc) => doc.positions.map((p: any, i: number) => ({ doc, p, k: `${doc.document_id}:${i}` }))).filter((x) => sel[x.k]?.on);
+  const chosen = docs.flatMap((doc) => doc.positions.filter((p: any) => !p.adopted).map((p: any) => ({ doc, p, k: keyOf(doc, p) }))).filter((x) => sel[x.k]?.on);
   const doImport = async () => {
     const items = chosen.map(({ doc, p, k }) => ({ document_id: doc.document_id, cost_type: sel[k].cost_type, amount_cents: parseMoney(sel[k].amount),
       evidence: p.evidence }));
     if (items.some((i) => !i.amount_cents)) return toast({ kind: "error", text: "Bitte für jede ausgewählte Position einen Betrag eintragen." });
-    setBusy(true);
-    try {
-      const r = await post(`/api/bk/periods/${periodId}/receipt-scan/import`, { items });
-      try { sessionStorage.removeItem(SEL_KEY); } catch { /* privat */ }
-      toast({ kind: "ok", text: `${r.imported} Position${r.imported === 1 ? "" : "en"} übernommen – bitte mit dem Beleg abgleichen.` });
-      onImported(r);
-    } catch (e: any) { toast({ kind: "error", text: e.message }); }
-    finally { setBusy(false); }
+    save(items);
   };
   const year = period.start.slice(0, 4) === period.end.slice(0, 4) ? period.start.slice(0, 4) : `${date(period.start)} – ${date(period.end)}`;
   const card = (doc: any, hit = false) => (
@@ -333,16 +337,23 @@ function ReceiptScan({ periodId, period, meta, query, onClose, onImported }: { p
         <span><strong>{doc.correspondent || doc.title}</strong><span className="muted sub-line">{doc.title}{doc.doc_date ? ` · ${date(doc.doc_date)}` : ""} · {doc.why}</span></span>
         <a className="secondary small btn-link" href={`#/dokument/${doc.document_id}`}>Beleg öffnen</a>
       </div>
-      {doc.linked ? <p className="small-num pos">Bereits in der Abrechnung übernommen.</p> : <>
+      {doc.linked ? <p className="small-num pos">Mit dem Gesamtbetrag bereits in der Abrechnung (über „Aus Ausgaben übernehmen“).</p> : <>
+        {doc.adopted_count > 0 && <p className="small-num pos">{doc.adopted_count} Position{doc.adopted_count === 1 ? "" : "en"} aus diesem Beleg gespeichert.</p>}
         {doc.kind === "bescheid" && doc.total != null && (
           <p className={`small-num ${doc.total_matches ? "pos" : "warn-text"}`}>{doc.total_matches
             ? `Summe der Positionen = Gesamtbetrag laut Bescheid (${money(doc.total)})`
             : `Summe der Positionen ${money(doc.sum)} weicht vom erkannten Gesamtbetrag ${money(doc.total)} ab – bitte prüfen`}</p>
         )}
         <ul className="plain-list">
-          {doc.positions.map((p: any, i: number) => {
-            const k = `${doc.document_id}:${i}`;
+          {doc.positions.map((p: any) => {
+            const k = keyOf(doc, p);
             const v = sel[k] || {};
+            if (p.adopted) return (
+              <li key={k} className="scan-pos saved">
+                <span className="bk-evidence">„{p.evidence}“</span>
+                <span className="status-pill bestaetigt"><Icon name="check" size={13} /> in der Abrechnung gespeichert</span>
+              </li>
+            );
             return (
               <li key={k} className={`scan-pos ${v.on ? "" : "off"}`}>
                 <label className="check"><input type="checkbox" checked={!!v.on} onChange={(e) => upd(k, { on: e.target.checked })} aria-label="übernehmen" />
@@ -358,14 +369,16 @@ function ReceiptScan({ periodId, period, meta, query, onClose, onImported }: { p
         </ul>
         {doc.amount_lines?.length > 0 && (
           <details className="amount-lines">
-            <summary>Alle Beträge im erkannten Text ({doc.amount_lines.length}) – einzeln übernehmen</summary>
+            <summary>Alle Beträge im erkannten Text ({doc.amount_lines.length}) – einzeln übernehmen (wird sofort gespeichert)</summary>
             <ul className="plain-list">
               {doc.amount_lines.map((l: any) => (
                 <li key={l.line} className={l.ignored || l.total ? "muted" : ""}>
                   <span className="bk-evidence">„{l.text}“{l.total ? <span className="sub-line">Summenzeile</span> : l.ignored ? <span className="sub-line">Fälligkeit, Rückstand o. Ä.</span> : null}</span>
-                  <span className="amount-chips">{l.amounts.map((a: number, j: number) => (
-                    <button key={j} type="button" className="secondary small" onClick={() => addLine(doc, l, a)}>+ {money(a)}</button>
-                  ))}</span>
+                  {l.adopted ? <span className="status-pill bestaetigt"><Icon name="check" size={13} /> gespeichert</span> : (
+                    <span className="amount-chips">{l.amounts.map((a: number, j: number) => (
+                      <button key={j} type="button" className="secondary small" disabled={busy} onClick={() => addLine(doc, l, a)}>+ {money(a)} speichern</button>
+                    ))}</span>
+                  )}
                 </li>
               ))}
             </ul>
@@ -381,7 +394,7 @@ function ReceiptScan({ periodId, period, meta, query, onClose, onImported }: { p
         <div className="bk-hits">
           <h4>{hits.results.length ? `${hits.results.length} Treffer für „${query}“ (${year})` : `Keine Treffer für „${query}“ im Zeitraum ${year}`}</h4>
           {hits.hint && <p className="hint">{hits.hint}</p>}
-          {hits.results.map((h: any) => card(h.linked ? h : withExtra(h), true))}
+          {hits.results.map((h: any) => card(h, true))}
         </div>
       )}
       <h4>Gefundene Belege zum Zeitraum</h4>
@@ -390,9 +403,9 @@ function ReceiptScan({ periodId, period, meta, query, onClose, onImported }: { p
         oder über die Suche.</p>
       {error && <ErrorBox text={error} />}
       {!data ? <Loading /> : data.length === 0 ? <p className="muted">Keine weiteren passenden Belege gefunden.</p>
-        : data.filter((x) => !hitDocs.some((h) => h.document_id === x.document_id)).map((doc) => card(withExtra(doc)))}
+        : data.filter((x) => !hitDocs.some((h) => h.document_id === x.document_id)).map((doc) => card(doc))}
       <div className="row-actions">
-        {chosen.length > 0 && <button className="primary" disabled={busy} onClick={doImport}>{chosen.length} Position{chosen.length === 1 ? "" : "en"} übernehmen</button>}
+        {chosen.length > 0 && <button className="primary" disabled={busy} onClick={doImport}>{chosen.length} Position{chosen.length === 1 ? "" : "en"} speichern</button>}
         <button className="ghost" onClick={onClose}>Schließen</button>
       </div>
     </div>
@@ -454,7 +467,7 @@ function CostsStep({ d, meta, onChange }: { d: any; meta: BkMeta; onChange: (d: 
         <p className="notice warn block">{d.receipts.unverified} automatisch erfasste Position{d.receipts.unverified === 1 ? "" : "en"} noch ungeprüft:
           Beleg öffnen, Betrag und Kostenart vergleichen, dann „geprüft“ antippen.</p>
       )}
-      {scanning && <ReceiptScan periodId={d.period.id} period={d.period} meta={meta} query={query} onClose={() => setScanning(false)} onImported={(r) => { onChange(r); setScanning(false); }} />}
+      {scanning && <ReceiptScan periodId={d.period.id} period={d.period} meta={meta} query={query} onClose={() => setScanning(false)} onSaved={(r) => onChange(r)} />}
       <p className="hint">Erfassen Sie die Gesamtkosten des Hauses für den Zeitraum. Bezahlte Ausgaben des Objekts (Abflussprinzip) können Sie direkt übernehmen;
         Verwaltung, Instandhaltung und Zinsen werden dabei als „nicht umlagefähig“ eingeordnet.</p>
 

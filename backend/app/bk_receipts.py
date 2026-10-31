@@ -152,7 +152,27 @@ def _proposal(conn: sqlite3.Connection, doc: dict[str, Any], strict: bool = True
 
 
 def _linked(conn: sqlite3.Connection, period_id: int) -> set[int]:
-    return {r[0] for r in conn.execute("SELECT document_id FROM bk_costs WHERE period_id = ? AND document_id IS NOT NULL", (period_id,))}
+    """Belege, die mit dem Gesamtbetrag in der Abrechnung stehen (z. B. über „Aus Ausgaben übernehmen“) – nicht mehr zerlegbar."""
+    return {r[0] for r in conn.execute("SELECT document_id FROM bk_costs WHERE period_id = ? AND document_id IS NOT NULL "
+                                       "AND origin != 'beleg'", (period_id,))}
+
+
+def _adopted(conn: sqlite3.Connection, period_id: int) -> dict[int, set[str]]:
+    """Bereits aus Belegzeilen übernommene Positionen je Beleg (Fundstellen) – sie bleiben gespeichert und werden markiert."""
+    out: dict[int, set[str]] = {}
+    for r in conn.execute("SELECT document_id, evidence FROM bk_costs WHERE period_id = ? AND origin = 'beleg' AND document_id IS NOT NULL",
+                          (period_id,)):
+        out.setdefault(r[0], set()).add(r[1] or "")
+    return out
+
+
+def _mark_adopted(entry: dict[str, Any], adopted: set[str]) -> dict[str, Any]:
+    for p in entry["positions"]:
+        p["adopted"] = p["evidence"] in adopted
+    for l in entry.get("amount_lines") or []:
+        l["adopted"] = l["text"] in adopted
+    entry["adopted_count"] = len(adopted)
+    return entry
 
 
 def _entry(doc: dict[str, Any], why: str, parsed: dict[str, Any]) -> dict[str, Any]:
@@ -163,7 +183,7 @@ def _entry(doc: dict[str, Any], why: str, parsed: dict[str, Any]) -> dict[str, A
 def scan(conn: sqlite3.Connection, period_id: int) -> list[dict[str, Any]]:
     """Belege des Objekts für den Zeitraum, die noch nicht in der Abrechnung sind, mit Positionsvorschlägen."""
     p = bk.load_period(conn, period_id)
-    linked = _linked(conn, period_id)
+    linked, adopted = _linked(conn, period_id), _adopted(conn, period_id)
     docs = rows(conn.execute(_DOC_SQL + "ORDER BY COALESCE(d.doc_date, d.created_at)", (p["property_id"],)))
     out = []
     for doc in docs:
@@ -173,8 +193,12 @@ def scan(conn: sqlite3.Connection, period_id: int) -> list[dict[str, Any]]:
         if not ok:
             continue
         parsed = _proposal(conn, doc)
-        if parsed:
-            out.append(_entry(doc, why, parsed))
+        if not parsed:
+            continue
+        entry = _mark_adopted(_entry(doc, why, parsed), adopted.get(doc["id"], set()))
+        if all(x["adopted"] for x in entry["positions"]):
+            continue  # alles aus diesem Beleg ist bereits gespeichert
+        out.append(entry)
     return out
 
 
@@ -248,7 +272,7 @@ def search_period(conn: sqlite3.Connection, period_id: int, query: str) -> dict[
     p = bk.load_period(conn, period_id)
     res = search.search(conn, query, area="vermietung", property_id=p["property_id"], date_from=p["start"], date_to=p["end"],
                         match=expanded_match(query), limit=50)
-    linked = _linked(conn, period_id)
+    linked, adopted = _linked(conn, period_id), _adopted(conn, period_id)
     out = []
     for r in res["results"]:
         doc = row(conn.execute(_DOC_SQL + "AND d.id = ?", (p["property_id"], r["id"])))
@@ -259,7 +283,7 @@ def search_period(conn: sqlite3.Connection, period_id: int, query: str) -> dict[
         entry["linked"] = doc["id"] in linked
         entry["snippet"] = r["snippet"]
         entry["amount_lines"] = amount_lines(doc["content"] or "")
-        out.append(entry)
+        out.append(_mark_adopted(entry, adopted.get(doc["id"], set())))
     return {"results": out, "total": res["total"], "hint": res["hint"], "from": p["start"], "to": p["end"]}
 
 
@@ -267,7 +291,7 @@ def import_positions(conn: sqlite3.Connection, period_id: int, items: list[dict[
     """Ausgewählte Positionen übernehmen – jede mit Verknüpfung zum Originalbeleg und Fundstelle, zunächst ungeprüft."""
     available = {d["document_id"]: d for d in scan(conn, period_id)}
     p = bk.load_period(conn, period_id)
-    linked = _linked(conn, period_id)
+    linked, adopted = _linked(conn, period_id), _adopted(conn, period_id)
     n = 0
     for it in items:
         doc = available.get(it.get("document_id"))
@@ -283,6 +307,9 @@ def import_positions(conn: sqlite3.Connection, period_id: int, items: list[dict[
         if not isinstance(amount, int) or amount == 0:
             raise bk.BKError(f"„{doc['title']}“: Bitte für jede ausgewählte Position einen Betrag angeben.")
         evidence = (it.get("evidence") or "").strip()[:300]
+        if evidence and evidence in adopted.get(doc["document_id"], set()):
+            continue  # schon gespeichert (z. B. doppelt angetippt) – nicht ein zweites Mal anlegen
+        adopted.setdefault(doc["document_id"], set()).add(evidence)
         label = bk.COST_TYPES.get(it.get("cost_type"), {}).get("label", "")
         cid = bk.add_cost(conn, period_id, {"cost_type": it.get("cost_type"), "amount_cents": amount, "document_id": doc["document_id"],
                                             "invoice_date": doc["doc_date"],

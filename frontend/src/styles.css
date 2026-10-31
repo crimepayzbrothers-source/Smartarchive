@@ -807,3 +807,5 @@ select.invalid, input.invalid { border-color: var(--danger); box-shadow: 0 0 0 3
 .amount-lines li > .bk-evidence { flex: 1 1 100%; }
 .amount-chips { display: flex; flex-wrap: wrap; gap: .3rem; }
 .panel > .bk-search { margin: .2rem 0 .6rem; }
+.scan-pos.saved { opacity: .85; }
+.scan-pos.saved .bk-evidence { flex: 1 1 100%; }

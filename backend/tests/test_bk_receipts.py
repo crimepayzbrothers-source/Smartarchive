@@ -101,7 +101,8 @@ def test_search_limited_to_billing_period(client):
                       json={"items": [{"document_id": d26, "cost_type": "schornstein", "amount_cents": 9640, "evidence": hit["why"]}]},
                       headers=HEADERS).json()
     assert out["imported"] == 1
-    assert client.get(f"/api/bk/periods/{period}/receipt-search", params={"q": "Schornsteinfeger"}).json()["results"][0]["linked"] is True
+    again = client.get(f"/api/bk/periods/{period}/receipt-search", params={"q": "Schornsteinfeger"}).json()["results"][0]
+    assert again["linked"] is False and again["adopted_count"] == 1
     # Beleg außerhalb des Zeitraums lässt sich nicht unterschieben
     other = [d["id"] for d in client.get("/api/documents", params={"q": "Schornsteinfeger"}).json()["results"] if d["id"] != d26][0]
     bad = client.post(f"/api/bk/periods/{period}/receipt-scan/import",
@@ -134,3 +135,24 @@ def test_keyword_search_synonyms_and_amount_lines(client):
                       headers=HEADERS).json()
     item = next(l for l in out["lines"] if l["cost_type"] == "grundsteuer")["items"][0]
     assert item["document_id"] == doc and item["evidence"].startswith("Grundsteuer B") and item["origin"] == "beleg"
+
+
+def test_partial_adoption_is_kept_and_not_duplicated(client):
+    pid, units, t, period = _setup(client)
+    doc = client.post("/api/upload", data={"area": "vermietung", "property_id": str(pid)},
+                      files=[("files", ("abgaben.pdf", make_pdf(BESCHEID), "application/pdf"))], headers=HEADERS).json()["created"][0]
+    run_worker()
+    s = client.get(f"/api/bk/periods/{period}/receipt-scan").json()[0]
+    first = s["positions"][0]
+    item = {"document_id": doc, "cost_type": first["cost_type"], "amount_cents": first["amount_cents"], "evidence": first["evidence"]}
+    assert client.post(f"/api/bk/periods/{period}/receipt-scan/import", json={"items": [item]}, headers=HEADERS).json()["imported"] == 1
+    # Beleg bleibt in der Belegprüfung: übernommene Position markiert, die übrigen weiterhin übernehmbar
+    s = client.get(f"/api/bk/periods/{period}/receipt-scan").json()[0]
+    assert [p["adopted"] for p in s["positions"]] == [True, False, False, False, False, False] and s["adopted_count"] == 1
+    hit = client.get(f"/api/bk/periods/{period}/receipt-search", params={"q": "Abgabenbescheid"}).json()["results"][0]
+    assert hit["positions"][0]["adopted"] is True
+    assert next(l for l in hit["amount_lines"] if l["text"] == first["evidence"])["adopted"] is True
+    # Doppelt angetippt: nicht ein zweites Mal gespeichert
+    assert client.post(f"/api/bk/periods/{period}/receipt-scan/import", json={"items": [item]}, headers=HEADERS).json()["imported"] == 0
+    d = client.get(f"/api/bk/periods/{period}").json()
+    assert sum(len(l["items"]) for l in d["lines"]) == 1
