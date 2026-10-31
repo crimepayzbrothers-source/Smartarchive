@@ -175,3 +175,7 @@ Schritt „Kosten“ → „Belege prüfen“ durchsucht die Belege des Objekts 
 - Ein zerlegter Beleg erscheint nicht mehr unter „Aus Ausgaben übernehmen“; Gesamtbetrag und Zerlegung zugleich werden als Doppelerfassung gemeldet.
 - Irrelevante Belege lassen sich in Belegprüfung und Trefferliste nach links wischen und sind dann für diese Abrechnung ausgeblendet
   (Migration 19, `bk_hidden_receipts`; nichts wird gelöscht). „Rückgängig“ im Hinweis oder „Ausgeblendete Belege“ → „Wieder einblenden“.
+
+### Rückkehr aus der Belegansicht
+
+Beim Antippen von „Beleg öffnen“ merkt sich die App die Karte und ihren Abstand zum Bildschirmrand (sessionStorage, Anker statt Pixelhöhe). Nach der Rückkehr wird die Karte so lange an dieselbe Bildschirmhöhe gerückt, bis keine Anfrage mehr läuft (`pendingRequests()` in `api.ts`) und die Lage 600 ms ruhig ist. Es gibt kein kurzes Zeitlimit, weil die Volltextsuche auf dem Server mehrere Sekunden dauern kann; die Obergrenze liegt bei 60 s. Eigenes Scrollen (Wischen, Mausrad, Tasten) beendet die Ausrichtung sofort, bloßes Antippen nicht. Geprüft auf einem simulierten Pixel 7 mit 0, 5 und 9 s Ladeverzögerung, mit dem Zurück-Knopf, der Zurück-Geste und nach einem Neuladen im Beleg.

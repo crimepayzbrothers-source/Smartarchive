@@ -17,7 +17,16 @@ export function setUnauthorizedHandler(fn: () => void) {
   onUnauthorized = fn;
 }
 
+// Laufende Anfragen zählen: die Scroll-Wiederherstellung wartet, bis alle Inhalte geladen sind
+let inflight = 0;
+export const pendingRequests = () => inflight;
+
 export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
+  inflight++;
+  try { return await apiRaw<T>(path, opts); } finally { inflight--; }
+}
+
+async function apiRaw<T>(path: string, opts: Opts): Promise<T> {
   const headers: Record<string, string> = { "X-Requested-With": "SmartArchive" };
   let body: BodyInit | undefined;
   if (opts.form) body = opts.form;

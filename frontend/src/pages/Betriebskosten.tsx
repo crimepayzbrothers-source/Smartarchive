@@ -1,6 +1,6 @@
 // Betriebskostenabrechnung: Übersicht je Objekt/Jahr und Schritt-für-Schritt-Assistent.
 import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { centsToInput, date, del, get, money, parseMoney, patch, post, put } from "../api";
+import { centsToInput, date, del, get, money, pendingRequests, parseMoney, patch, post, put } from "../api";
 import { go, replaceRoute, takeScroll, useLoad, useMeta, useToast } from "../lib";
 import { BackButton, Empty, ErrorBox, Icon, Loading } from "../components/ui";
 import { ConfirmDelete, SwipeRow } from "../components/SwipeRow";
@@ -200,23 +200,29 @@ function takeAnchor(): Anchor | null {
   } catch { return null; }
 }
 
-/** Richtet den gemerkten Anker aus, bis sich seine Lage nicht mehr ändert (höchstens 4 s; eigenes Scrollen bricht ab). */
+/** Richtet den gemerkten Anker aus, bis alles geladen ist und seine Lage sich nicht mehr ändert.
+ *  Kein festes Zeitlimit für langsame Server (Volltextsuche kann dauern) – nur eine Obergrenze von 60 s.
+ *  Abbruch nur, wenn Sie selbst scrollen (Wischen, Mausrad, Tasten) – ein bloßes Antippen bricht nicht ab. */
 function restoreAnchor(a: Anchor) {
-  let stable = 0, last = NaN, tries = 0, stopped = false;
+  const t0 = Date.now();
+  let quietSince = 0, last = NaN, stopped = false;
   const stop = () => { stopped = true; };
-  window.addEventListener("touchstart", stop, { once: true, passive: true });
-  window.addEventListener("wheel", stop, { once: true, passive: true });
+  const evs = ["touchmove", "wheel", "keydown"] as const;
+  evs.forEach((ev) => window.addEventListener(ev, stop, { once: true, passive: true }));
+  const done = () => evs.forEach((ev) => window.removeEventListener(ev, stop));
   const tick = () => {
-    if (stopped || tries++ > 80) return;
+    if (stopped || Date.now() - t0 > 60000) return done();
     const el = a.key ? document.querySelector(`[data-anchor="${CSS.escape(a.key)}"]`) as HTMLElement | null : null;
     let target: number | null = null;
     if (el) target = Math.max(0, window.scrollY + el.getBoundingClientRect().top - a.top);
-    else if (!a.key && document.documentElement.scrollHeight - window.innerHeight >= a.y - 4) target = a.y;
+    else if ((!a.key || (pendingRequests() === 0 && Date.now() - t0 > 1500))  // Element nicht mehr da (z. B. ausgeblendet): alte Höhe
+      && document.documentElement.scrollHeight - window.innerHeight >= a.y - 4) target = a.y;
     if (target !== null) {
       if (Math.abs(window.scrollY - target) > 1) window.scrollTo(0, target);
-      stable = Math.abs(target - last) < 1 ? stable + 1 : 0;
+      if (!(Math.abs(target - last) < 1)) quietSince = Date.now();
       last = target;
-      if (stable >= 5) return;  // 5 × 50 ms unverändert: fertig
+      // fertig: keine Anfrage mehr offen und Lage seit 600 ms unverändert
+      if (pendingRequests() === 0 && Date.now() - quietSince >= 600) return done();
     }
     window.setTimeout(tick, 50);
   };
