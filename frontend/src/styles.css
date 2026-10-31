@@ -829,3 +829,11 @@ select.invalid, input.invalid { border-color: var(--danger); box-shadow: 0 0 0 3
 .hidden-receipts { margin-top: .8rem; font-size: .9rem; }
 .hidden-receipts summary { cursor: pointer; color: var(--petrol); font-weight: 560; }
 .scan-pos .confirm-pos { margin-left: auto; display: inline-flex; align-items: center; gap: .3rem; }
+
+/* Ausgaben: Suche in „Alle Positionen“ */
+.position-search .pos-search-bar { display: flex; flex-wrap: wrap; gap: .4rem .9rem; align-items: center; margin: .6rem 0 .3rem; }
+.position-search .search-row { flex: 1 1 16rem; display: flex; align-items: center; gap: .4rem; min-width: 0;
+  border: 1px solid var(--line); border-radius: 10px; padding: 0 .5rem; background: var(--surface); }
+.position-search .search-row input { flex: 1; min-width: 0; border: 0; background: transparent; padding: .55rem 0; outline: none; box-shadow: none; }
+.position-search .search-row:focus-within { border-color: var(--petrol); }
+.position-search .check.inline { margin: 0; white-space: nowrap; }

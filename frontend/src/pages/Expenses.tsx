@@ -1,6 +1,6 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ApiError, centsToInput, date, get, money, parseMoney, post } from "../api";
-import { go, useLoad, useMeta, useToast } from "../lib";
+import { go, replaceRoute, takeScroll, useLoad, useMeta, useToast } from "../lib";
 import { Empty, ErrorBox, Icon, Loading } from "../components/ui";
 import { extractHint, fetchExtract, type Extracted } from "../extract";
 import { AmountPicker } from "../components/AmountPicker";
@@ -111,17 +111,74 @@ export default function Expenses({ params }: { params: URLSearchParams }) {
         </section>
       )}
 
-      {items.length > 0 && (
-        <details className="panel collapsible">
-          <summary>Alle Positionen {year} ({items.length})</summary>
-          <PositionTable items={items} labels={labels} />
-        </details>
-      )}
+      {items.length > 0 && <PositionSearch items={items} year={year} property={property} labels={labels} params={params} />}
     </div>
   );
 }
 
-function PositionTable({ items, labels }: { items: any[]; labels: Record<string, string> }) {
+// Suche in den Positionen: Aussteller, Belegtitel, Notiz, Kategorie, Objekt, Einheit, Betrag, Datum.
+// Suchbegriff und aufgeklappte Liste stehen in der Adresse – nach dem Korrigieren im Beleg führt „Zurück“ genau hierher.
+const fold = (t: string) => t.toLowerCase().replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss");
+const STATUS_TEXT: Record<string, string> = { bestaetigt: "geprüft", entwurf: "entwurf", ungeklaert: "ungeklärt" };
+
+export function matchPosition(e: any, labels: Record<string, string>, terms: string[]): boolean {
+  const amount = (e.amount_cents / 100).toFixed(2);
+  const hay = fold([e.payee, e.document_title, e.note, labels[e.category_key] || e.category_key, e.property_name, e.unit_name,
+    amount, amount.replace(".", ","), money(e.amount_cents), e.paid_on && date(e.paid_on), e.invoice_date && date(e.invoice_date),
+    e.paid_on, e.invoice_date, STATUS_TEXT[e.status], e.origin === "auto" && e.status === "bestaetigt" ? "automatisch" : ""].filter(Boolean).join(" \u0001 "));
+  return terms.every((t) => hay.includes(t));
+}
+
+function setParam(params: URLSearchParams, patch: Record<string, string | null>) {
+  const path = window.location.hash.replace(/^#/, "").split("?")[0] || "/ausgaben";
+  const qs = new URLSearchParams(window.location.hash.split("?")[1] || params.toString());
+  for (const [k, v] of Object.entries(patch)) (v ? qs.set(k, v) : qs.delete(k));
+  replaceRoute(path, qs);
+}
+
+function PositionSearch({ items, year, property, labels, params }: { items: any[]; year: number; property: number | null;
+  labels: Record<string, string>; params: URLSearchParams }) {
+  const [q, setQ] = useState(params.get("suche") || "");
+  const [allYears, setAllYears] = useState(params.get("zeitraum") === "alle");
+  const [open, setOpen] = useState(!!(params.get("suche") || params.get("liste") || params.get("zeitraum")));
+  const { data: every } = useLoad(() => (allYears ? get<any[]>("/api/expenses", { property_id: property }) : Promise.resolve(null)), [allYears, property]);
+  // Rückkehr aus dem Beleg: an dieselbe Stelle scrollen, sobald die Liste steht
+  const memo = useRef<number | null>(takeScroll());
+  const source: any[] | null = allYears ? every : items;
+  useEffect(() => {
+    if (memo.current === null || !source) return;
+    const y = memo.current;
+    requestAnimationFrame(() => { if (document.documentElement.scrollHeight - window.innerHeight >= y - 4) { window.scrollTo(0, y); memo.current = null; } });
+  }, [source]);
+  const terms = fold(q).split(/\s+/).filter(Boolean);
+  const shown = (source || []).filter((e) => !terms.length || matchPosition(e, labels, terms));
+  const sum = shown.reduce((a, e) => a + e.amount_cents, 0);
+  const change = (v: string) => { setQ(v); setParam(params, { suche: v.trim() || null }); };
+  return (
+    <details className="panel collapsible position-search" open={open}
+      onToggle={(e) => { const o = (e.currentTarget as HTMLDetailsElement).open; setOpen(o); setParam(params, { liste: o ? "1" : null }); }}>
+      <summary>Alle Positionen {allYears ? "aller Jahre" : year} ({source ? source.length : "…"})</summary>
+      <div className="pos-search-bar">
+        <span className="search-row">
+          <Icon name="search" size={16} />
+          <input type="search" value={q} onChange={(e) => change(e.target.value)} enterKeyHint="search"
+            placeholder="Aussteller, Titel, Betrag, Datum …" aria-label="Positionen durchsuchen" />
+          {q && <button type="button" className="ghost small" onClick={() => change("")} aria-label="Suche leeren"><Icon name="close" size={16} /></button>}
+        </span>
+        <label className="check inline"><input type="checkbox" checked={allYears}
+          onChange={(e) => { setAllYears(e.target.checked); setParam(params, { zeitraum: e.target.checked ? "alle" : null }); }} /> alle Jahre</label>
+      </div>
+      {!source ? <Loading /> : <>
+        <p className="muted small-num">{terms.length ? `${shown.length} von ${source.length} Positionen · Summe ${money(sum)}`
+          : `${source.length} Positionen · Summe ${money(sum)}`} · Position antippen, um den Beleg zu öffnen und Angaben zu korrigieren.</p>
+        {shown.length ? <PositionTable items={shown} labels={labels} showYear={allYears} />
+          : <p className="muted">Keine Position passt zu „{q}“{allYears ? "" : ` in ${year} – ggf. „alle Jahre“ ankreuzen`}.</p>}
+      </>}
+    </details>
+  );
+}
+
+function PositionTable({ items, labels, showYear }: { items: any[]; labels: Record<string, string>; showYear?: boolean }) {
   return (
     <div className="table-wrap">
       <table className="positions">
@@ -129,8 +186,9 @@ function PositionTable({ items, labels }: { items: any[]; labels: Record<string,
         <tbody>
           {items.map((e) => (
             <tr key={e.id} onClick={() => e.document_id && (window.location.hash = `/dokument/${e.document_id}`)} className={e.document_id ? "clickable" : ""}>
-              <td>{e.paid_on ? <>{date(e.paid_on)}{e.paid_assumed ? <span className="muted"> (angen.)</span> : null}</> : <span className="muted">fehlt</span>}</td>
-              <td>{e.payee || e.document_title}</td>
+              <td>{e.paid_on ? <>{date(e.paid_on)}{e.paid_assumed ? <span className="muted"> (angen.)</span> : null}</> : <span className="muted">fehlt{showYear && e.booking_date ? ` (${e.booking_date.slice(0, 4)})` : ""}</span>}</td>
+              <td>{e.payee || e.document_title}{e.payee && e.document_title && e.document_title !== e.payee
+                ? <span className="muted sub-line">{e.document_title}</span> : null}</td>
               <td>{labels[e.category_key] || e.category_key}</td>
               <td>{e.property_name || "–"}</td>
               <td className="num">{money(e.amount_cents)}</td>
