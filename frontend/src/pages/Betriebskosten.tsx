@@ -175,8 +175,54 @@ function setUrlParams(patch: Record<string, string | null>) {
 }
 const urlParam = (k: string) => new URLSearchParams(window.location.hash.split("?")[1] || "").get(k);
 
-// Scrollposition beim Zurückkehren aus einem Beleg wiederherstellen, sobald der Inhalt hoch genug ist
+// Rückkehr aus einem Beleg an exakt dieselbe Stelle.
+// Beim Antippen eines Beleg-Links wird das umgebende Element (data-anchor) samt Abstand zum Bildschirmrand gemerkt.
+// Nach der Rückkehr wartet die Seite, bis Abrechnung, Belegliste und Treffer geladen sind und das Element existiert,
+// und richtet es wieder genau an derselben Bildschirmhöhe aus. Eine reine Pixelhöhe genügt nicht, weil die Inhalte
+// nacheinander laden und sich dabei verschieben. Fallback ohne Anker: gespeicherte Scrollhöhe.
+const ANCHOR_KEY = "sa-bk-anchor";
+type Anchor = { hash: string; key: string; top: number; y: number };
 let pendingScroll: number | null = null;
+
+function rememberAnchor(e: { target: EventTarget | null }) {
+  const link = (e.target as HTMLElement | null)?.closest?.('a[href^="#/dokument/"]');
+  if (!link) return;
+  const el = link.closest("[data-anchor]") as HTMLElement | null;
+  const a: Anchor = { hash: window.location.hash, key: el?.dataset.anchor || "", top: el ? el.getBoundingClientRect().top : 0, y: window.scrollY };
+  try { sessionStorage.setItem(ANCHOR_KEY, JSON.stringify(a)); } catch { /* privat */ }
+}
+
+function takeAnchor(): Anchor | null {
+  try {
+    const a = JSON.parse(sessionStorage.getItem(ANCHOR_KEY) || "null") as Anchor | null;
+    sessionStorage.removeItem(ANCHOR_KEY);
+    return a && a.hash === window.location.hash ? a : null;
+  } catch { return null; }
+}
+
+/** Richtet den gemerkten Anker aus, bis sich seine Lage nicht mehr ändert (höchstens 4 s; eigenes Scrollen bricht ab). */
+function restoreAnchor(a: Anchor) {
+  let stable = 0, last = NaN, tries = 0, stopped = false;
+  const stop = () => { stopped = true; };
+  window.addEventListener("touchstart", stop, { once: true, passive: true });
+  window.addEventListener("wheel", stop, { once: true, passive: true });
+  const tick = () => {
+    if (stopped || tries++ > 80) return;
+    const el = a.key ? document.querySelector(`[data-anchor="${CSS.escape(a.key)}"]`) as HTMLElement | null : null;
+    let target: number | null = null;
+    if (el) target = Math.max(0, window.scrollY + el.getBoundingClientRect().top - a.top);
+    else if (!a.key && document.documentElement.scrollHeight - window.innerHeight >= a.y - 4) target = a.y;
+    if (target !== null) {
+      if (Math.abs(window.scrollY - target) > 1) window.scrollTo(0, target);
+      stable = Math.abs(target - last) < 1 ? stable + 1 : 0;
+      last = target;
+      if (stable >= 5) return;  // 5 × 50 ms unverändert: fertig
+    }
+    window.setTimeout(tick, 50);
+  };
+  tick();
+}
+
 function restoreScroll() {
   if (pendingScroll === null) return;
   const y = pendingScroll;
@@ -185,12 +231,28 @@ function restoreScroll() {
   });
 }
 
+// Aufgeklappte Bereiche („Alle Beträge im erkannten Text“) bleiben beim Zurückkehren aufgeklappt
+function useOpenSet(key: string): [Set<string>, (k: string, open: boolean) => void] {
+  const [set, setSet] = useState<Set<string>>(() => { try { return new Set(JSON.parse(sessionStorage.getItem(key) || "[]")); } catch { return new Set(); } });
+  const toggle = (k: string, open: boolean) => setSet((cur) => {
+    const n = new Set(cur);
+    if (open) n.add(k); else n.delete(k);
+    try { sessionStorage.setItem(key, JSON.stringify([...n])); } catch { /* privat */ }
+    return n;
+  });
+  return [set, toggle];
+}
+
 export function BkWizard({ id, params }: { id: number; params: URLSearchParams }) {
   const bkMeta = useBkMeta();
   const { data, error, loading, reload } = useLoad(() => get(`/api/bk/periods/${id}`), [id]);
   const [step, setStepState] = useState<string>(params.get("schritt") || "kosten");
   const [d, setD] = useState<any>(null);
-  useEffect(() => { pendingScroll = takeScroll(); }, [id]);
+  useEffect(() => {
+    const memo = takeScroll();
+    const a = takeAnchor();
+    if (a) { pendingScroll = null; restoreAnchor(a); } else pendingScroll = memo;
+  }, [id]);
   useEffect(() => { if (data) setD(data); }, [data]);
   useEffect(() => { if (d) restoreScroll(); }, [d]);
   const setStep = (s: string) => { setStepState(s); setUrlParams({ schritt: s, belege: null, suche: null }); window.scrollTo(0, 0); };
@@ -206,7 +268,7 @@ export function BkWizard({ id, params }: { id: number; params: URLSearchParams }
   const idx = STEPS.findIndex(([k]) => k === step);
 
   return (
-    <div className="page bk-wizard">
+    <div className="page bk-wizard" onClickCapture={rememberAnchor}>
       <header className="doc-head">
         <BackButton fallback="/betriebskosten" />
         <div className="doc-head-main">
@@ -296,6 +358,7 @@ function ReceiptScan({ periodId, period, meta, query, onClose, onSaved }: { peri
     }
   };
   const keyOf = (doc: any, p: any) => `${doc.document_id}:${p.evidence}`;
+  const [openLines, toggleLines] = useOpenSet(`sa-bk-open-${periodId}`);
   const visibleHits: any[] = (hits?.results || []).filter((h: any) => !h.hidden && !gone.includes(h.document_id));
   const hiddenHits = (hits?.results || []).length - visibleHits.length;
   const hitDocs: any[] = visibleHits.filter((h: any) => !h.linked);
@@ -350,7 +413,7 @@ function ReceiptScan({ periodId, period, meta, query, onClose, onSaved }: { peri
   const card = (doc: any, hit = false) => (
     <SwipeRow key={`${hit ? "h" : "s"}${doc.document_id}`} label="Ausblenden" icon="close" tone="neutral" skip="input, select, textarea, button, a"
       onDelete={() => setHidden(doc, true)}>
-    <div className="scan-doc">
+    <div className="scan-doc" data-anchor={`${hit ? "h" : "s"}-${doc.document_id}`}>
       <div className="scan-doc-head">
         <span><strong>{doc.correspondent || doc.title}</strong><span className="muted sub-line">{doc.title}{doc.doc_date ? ` · ${date(doc.doc_date)}` : ""} · {doc.why}</span></span>
         <a className="secondary small btn-link" href={`#/dokument/${doc.document_id}`}>Beleg öffnen</a>
@@ -386,7 +449,8 @@ function ReceiptScan({ periodId, period, meta, query, onClose, onSaved }: { peri
           })}
         </ul>
         {doc.amount_lines?.length > 0 && (
-          <details className="amount-lines">
+          <details className="amount-lines" open={openLines.has(String(doc.document_id))}
+            onToggle={(e) => toggleLines(String(doc.document_id), (e.currentTarget as HTMLDetailsElement).open)}>
             <summary>Alle Beträge im erkannten Text ({doc.amount_lines.length}) – einzeln übernehmen (wird sofort gespeichert)</summary>
             <ul className="plain-list">
               {doc.amount_lines.map((l: any) => (
@@ -534,7 +598,7 @@ function CostsStep({ d, meta, onChange }: { d: any; meta: BkMeta; onChange: (d: 
               <div className="cost-group-head"><strong>{l.label}</strong><span className="muted">{l.ref}</span><strong className="num">{money(l.total)}</strong></div>
               <ul className="plain-list">
                 {l.items.map((c: any) => (
-                  <li key={c.id} className="swipe-li"><SwipeRow className="cost-item" asking={doomed?.id === c.id} onDelete={() => setDoomed(c)}>
+                  <li key={c.id} className="swipe-li" data-anchor={`cost-${c.id}`}><SwipeRow className="cost-item" asking={doomed?.id === c.id} onDelete={() => setDoomed(c)}>
                     <span>{c.description || "ohne Beschreibung"}<span className="muted sub-line">{c.invoice_date ? date(c.invoice_date) : "ohne Datum"}
                       {c.unit_name ? ` · nur ${c.unit_name}` : ""}{c.origin === "ausgabe" ? " · aus Ausgaben" : ""}
                       {c.origin === "beleg" ? " · aus Beleg" : ""}
