@@ -107,3 +107,30 @@ def test_search_limited_to_billing_period(client):
     bad = client.post(f"/api/bk/periods/{period}/receipt-scan/import",
                       json={"items": [{"document_id": other, "cost_type": "schornstein", "amount_cents": 9100}]}, headers=HEADERS)
     assert bad.status_code == 400
+
+
+def test_keyword_search_synonyms_and_amount_lines(client):
+    from app.bk_receipts import expanded_match
+    assert expanded_match("Abgabenbescheid") == \
+        '(("abgabenbescheid") OR ("grundbesitzabgaben") OR ("gebührenbescheid") OR ("abgaben" AND "bescheid"))'
+    pid, units, t, period = _setup(client)
+    doc = client.post("/api/upload", data={"area": "vermietung", "property_id": str(pid)},
+                      files=[("files", ("abgaben.pdf", make_pdf(BESCHEID), "application/pdf"))], headers=HEADERS).json()["created"][0]
+    run_worker()
+    # Im Beleg steht „Bescheid ueber Grundbesitzabgaben“ – das Stichwort „Abgabenbescheid“ findet ihn trotzdem
+    for q in ("Abgabenbescheid", "Müll", "Abwasser"):
+        r = client.get(f"/api/bk/periods/{period}/receipt-search", params={"q": q}).json()
+        assert [x["document_id"] for x in r["results"]] == [doc], q
+    hit = r["results"][0]
+    assert hit["kind"] == "bescheid" and len(hit["positions"]) == 6
+    lines = {l["text"]: l for l in hit["amount_lines"]}
+    gs = next(l for t_, l in lines.items() if t_.startswith("Grundsteuer B"))
+    assert gs["amounts"] == [5230, 24320] and gs["cost_type"] == "grundsteuer"
+    assert next(l for t_, l in lines.items() if t_.startswith("Rückstand"))["ignored"] is True
+    assert next(l for t_, l in lines.items() if t_.startswith("Gesamtbetrag"))["total"] is True
+    # Einzelnen Betrag aus einer beliebigen Zeile übernehmen (mit Fundstelle)
+    out = client.post(f"/api/bk/periods/{period}/receipt-scan/import",
+                      json={"items": [{"document_id": doc, "cost_type": "grundsteuer", "amount_cents": 24320, "evidence": gs["text"]}]},
+                      headers=HEADERS).json()
+    item = next(l for l in out["lines"] if l["cost_type"] == "grundsteuer")["items"][0]
+    assert item["document_id"] == doc and item["evidence"].startswith("Grundsteuer B") and item["origin"] == "beleg"

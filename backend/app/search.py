@@ -24,9 +24,9 @@ def short_terms(query: str) -> list[str]:
 
 def search(conn: sqlite3.Connection, query: str, *, area: str | None = None, category_id: int | None = None,
            property_id: int | None = None, year: int | None = None, tag: str | None = None,
-           date_from: str | None = None, date_to: str | None = None,
+           date_from: str | None = None, date_to: str | None = None, match: str | None = None,
            limit: int = 50, offset: int = 0) -> dict[str, Any]:
-    match = build_match(query)
+    match = match or build_match(query)
     where = ["d.deleted_at IS NULL", "d.status != 'processing'"]
     params: list[Any] = []
     if area:

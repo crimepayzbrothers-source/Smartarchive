@@ -271,15 +271,18 @@ function useAction(onChange: (d: any) => void) {
 }
 
 // Belegprüfung: Archivbelege des Objekts per Volltext auswerten (Abgabenbescheide zeilenweise zerlegen)
-function ReceiptScan({ periodId, period, meta, onClose, onImported }: { periodId: number; period: any; meta: BkMeta; onClose: () => void; onImported: (r: any) => void }) {
+function ReceiptScan({ periodId, period, meta, query, onClose, onImported }: { periodId: number; period: any; meta: BkMeta; query: string;
+  onClose: () => void; onImported: (r: any) => void }) {
   const toast = useToast();
   const SEL_KEY = `sa-bk-sel-${periodId}`;
   const { data, error } = useLoad(() => get<any[]>(`/api/bk/periods/${periodId}/receipt-scan`), [periodId]);
-  const [q, setQ] = useState(urlParam("suche") || "");
   const [hits, setHits] = useState<any>(null);
+  const [extra, setExtra] = useState<Record<number, any[]>>({});  // zusätzlich aus einzelnen Belegzeilen übernommene Beträge
   const [sel, setSel] = useState<Record<string, any>>(() => { try { return JSON.parse(sessionStorage.getItem(SEL_KEY) || "{}"); } catch { return {}; } });
   const [busy, setBusy] = useState(false);
-  const docs: any[] = [...(data || []), ...((hits?.results || []).filter((h: any) => !h.linked && !(data || []).some((x) => x.document_id === h.document_id)))];
+  const withExtra = (doc: any) => ({ ...doc, positions: [...doc.positions, ...(extra[doc.document_id] || [])] });
+  const hitDocs: any[] = (hits?.results || []).filter((h: any) => !h.linked).map(withExtra);
+  const docs: any[] = [...(data || []).filter((x) => !hitDocs.some((h) => h.document_id === x.document_id)).map(withExtra), ...hitDocs];
   useEffect(() => {  // Vorbelegung für neue Belege, gemerkte Auswahl bleibt
     if (!docs.length) return;
     const next = { ...sel };
@@ -290,16 +293,24 @@ function ReceiptScan({ periodId, period, meta, onClose, onImported }: { periodId
         amount: p.amount_cents != null ? centsToInput(p.amount_cents) : "" }; changed = true; }
     }));
     if (changed) setSel(next);
-  }, [data, hits]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [data, hits, extra]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { try { sessionStorage.setItem(SEL_KEY, JSON.stringify(sel)); } catch { /* privat */ } }, [sel, SEL_KEY]);
   useEffect(() => { if (data) restoreScroll(); }, [data, hits]);
-  const runSearch = async (term: string) => {
-    setUrlParams({ suche: term || null });
-    if (!term.trim()) return setHits(null);
-    try { setHits(await get(`/api/bk/periods/${periodId}/receipt-search`, { q: term })); }
-    catch (e: any) { toast({ kind: "error", text: e.message }); }
+  useEffect(() => {
+    if (!query.trim()) { setHits(null); return; }
+    let live = true;
+    get(`/api/bk/periods/${periodId}/receipt-search`, { q: query }).then((r) => live && setHits(r))
+      .catch((e: any) => toast({ kind: "error", text: e.message }));
+    return () => { live = false; };
+  }, [query, periodId]); // eslint-disable-line react-hooks/exhaustive-deps
+  const addLine = (doc: any, l: any, amount: number) => {
+    const ct = l.cost_type || doc.positions[0]?.cost_type || "sonstige";
+    const list = extra[doc.document_id] || [];
+    const idx = doc.positions.length;  // Index der neuen Position (Vorschläge + bisherige Zusatzpositionen)
+    const k = `${doc.document_id}:${idx}`;
+    setExtra({ ...extra, [doc.document_id]: [...list, { cost_type: ct, amount_cents: amount, evidence: l.text, note: "aus Belegzeile übernommen", confidence: "pruefen" }] });
+    setSel({ ...sel, [k]: { on: true, cost_type: ct, amount: centsToInput(amount) } });
   };
-  useEffect(() => { if (q) runSearch(q); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const upd = (k: string, patchv: any) => setSel({ ...sel, [k]: { ...sel[k], ...patchv } });
   const chosen = docs.flatMap((doc) => doc.positions.map((p: any, i: number) => ({ doc, p, k: `${doc.document_id}:${i}` }))).filter((x) => sel[x.k]?.on);
   const doImport = async () => {
@@ -345,24 +356,32 @@ function ReceiptScan({ periodId, period, meta, onClose, onImported }: { periodId
             );
           })}
         </ul>
+        {doc.amount_lines?.length > 0 && (
+          <details className="amount-lines">
+            <summary>Alle Beträge im erkannten Text ({doc.amount_lines.length}) – einzeln übernehmen</summary>
+            <ul className="plain-list">
+              {doc.amount_lines.map((l: any) => (
+                <li key={l.line} className={l.ignored || l.total ? "muted" : ""}>
+                  <span className="bk-evidence">„{l.text}“{l.total ? <span className="sub-line">Summenzeile</span> : l.ignored ? <span className="sub-line">Fälligkeit, Rückstand o. Ä.</span> : null}</span>
+                  <span className="amount-chips">{l.amounts.map((a: number, j: number) => (
+                    <button key={j} type="button" className="secondary small" onClick={() => addLine(doc, l, a)}>+ {money(a)}</button>
+                  ))}</span>
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
       </>}
     </div>
   );
   return (
     <div className="import-box receipt-scan">
       <h3>Belegprüfung im Archiv</h3>
-      <form className="bk-search" onSubmit={(e) => { e.preventDefault(); (document.activeElement as HTMLElement)?.blur(); runSearch(q); }}>
-        <label>Volltextsuche in den Belegen {year}<span className="search-row">
-          <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="z. B. Schornsteinfeger, Abwasser, Versicherung" enterKeyHint="search" />
-          <button className="secondary">Suchen</button></span></label>
-        <p className="hint">Gesucht wird nur in Belegen dieses Objekts aus dem Bereich Vermietung mit Belegdatum im Abrechnungszeitraum
-          ({date(period.start)} – {date(period.end)}).</p>
-      </form>
       {hits && (
         <div className="bk-hits">
-          <h4>{hits.results.length ? `${hits.results.length} Treffer für „${q}“` : `Keine Treffer für „${q}“ im Zeitraum`}</h4>
+          <h4>{hits.results.length ? `${hits.results.length} Treffer für „${query}“ (${year})` : `Keine Treffer für „${query}“ im Zeitraum ${year}`}</h4>
           {hits.hint && <p className="hint">{hits.hint}</p>}
-          {hits.results.map((h: any) => card(h, true))}
+          {hits.results.map((h: any) => card(h.linked ? h : withExtra(h), true))}
         </div>
       )}
       <h4>Gefundene Belege zum Zeitraum</h4>
@@ -370,7 +389,8 @@ function ReceiptScan({ periodId, period, meta, onClose, onImported }: { periodId
         jede Position zeigt die Zeile, aus der sie stammt. Rechnungen, die schon als Ausgabe erfasst sind, übernehmen Sie über „Aus Ausgaben übernehmen“
         oder über die Suche.</p>
       {error && <ErrorBox text={error} />}
-      {!data ? <Loading /> : data.length === 0 ? <p className="muted">Keine weiteren passenden Belege gefunden.</p> : data.map((doc) => card(doc))}
+      {!data ? <Loading /> : data.length === 0 ? <p className="muted">Keine weiteren passenden Belege gefunden.</p>
+        : data.filter((x) => !hitDocs.some((h) => h.document_id === x.document_id)).map((doc) => card(withExtra(doc)))}
       <div className="row-actions">
         {chosen.length > 0 && <button className="primary" disabled={busy} onClick={doImport}>{chosen.length} Position{chosen.length === 1 ? "" : "en"} übernehmen</button>}
         <button className="ghost" onClick={onClose}>Schließen</button>
@@ -386,7 +406,11 @@ function CostsStep({ d, meta, onChange }: { d: any; meta: BkMeta; onChange: (d: 
   const [choice, setChoice] = useState<Record<number, string>>({});
   const [doomed, setDoomed] = useState<any>(null);
   const [scanning, setScanningState] = useState(urlParam("belege") === "1");
-  const setScanning = (on: boolean) => { setScanningState(on); setUrlParams({ belege: on ? "1" : null, suche: on ? urlParam("suche") : null }); };
+  const [query, setQuery] = useState(urlParam("suche") || "");
+  const [qInput, setQInput] = useState(query);
+  const setScanning = (on: boolean) => { setScanningState(on); setUrlParams({ belege: on ? "1" : null, suche: on ? query || null : null });
+    if (!on) { setQuery(""); setQInput(""); } };
+  const runQuery = (term: string) => { setQuery(term.trim()); setScanningState(true); setUrlParams({ belege: "1", suche: term.trim() || null }); };
   const [form, setForm] = useState({ cost_type: "grundsteuer", description: "", amount: "", invoice_date: "", unit_id: "" });
   const types = meta.cost_types;
   const label = (k: string) => types.find((t) => t.key === k)?.label || k;
@@ -413,6 +437,15 @@ function CostsStep({ d, meta, onChange }: { d: any; meta: BkMeta; onChange: (d: 
   return (
     <section className="panel">
       <header className="panel-head"><h2>Kosten des Hauses</h2></header>
+      <form className="bk-search" onSubmit={(e) => { e.preventDefault(); (document.activeElement as HTMLElement)?.blur(); runQuery(qInput); }}>
+        <label>Beleg suchen – Volltext {d.period.start.slice(0, 4) === d.period.end.slice(0, 4) ? d.period.start.slice(0, 4) : "im Zeitraum"}
+          <span className="search-row">
+            <input type="search" value={qInput} onChange={(e) => setQInput(e.target.value)} placeholder="z. B. Abgabenbescheid, Schornsteinfeger" enterKeyHint="search" />
+            <button className="primary"><Icon name="search" size={16} /> Suchen</button>
+          </span></label>
+        <p className="hint">Nur Belege dieses Objekts mit Belegdatum {date(d.period.start)} – {date(d.period.end)}. Fachbegriffe werden erweitert
+          (z. B. „Abgabenbescheid“ findet auch „Bescheid über Grundbesitzabgaben“).</p>
+      </form>
       <div className="row-actions">
         <button className="secondary" onClick={() => setScanning(true)}><Icon name="search" size={16} /> Belege prüfen</button>
         <button className="secondary" onClick={loadImport}><Icon name="down" size={16} /> Aus Ausgaben übernehmen{d.importable ? ` (${d.importable})` : ""}</button>
@@ -421,7 +454,7 @@ function CostsStep({ d, meta, onChange }: { d: any; meta: BkMeta; onChange: (d: 
         <p className="notice warn block">{d.receipts.unverified} automatisch erfasste Position{d.receipts.unverified === 1 ? "" : "en"} noch ungeprüft:
           Beleg öffnen, Betrag und Kostenart vergleichen, dann „geprüft“ antippen.</p>
       )}
-      {scanning && <ReceiptScan periodId={d.period.id} period={d.period} meta={meta} onClose={() => setScanning(false)} onImported={(r) => { onChange(r); setScanning(false); }} />}
+      {scanning && <ReceiptScan periodId={d.period.id} period={d.period} meta={meta} query={query} onClose={() => setScanning(false)} onImported={(r) => { onChange(r); setScanning(false); }} />}
       <p className="hint">Erfassen Sie die Gesamtkosten des Hauses für den Zeitraum. Bezahlte Ausgaben des Objekts (Abflussprinzip) können Sie direkt übernehmen;
         Verwaltung, Instandhaltung und Zinsen werden dabei als „nicht umlagefähig“ eingeordnet.</p>
 

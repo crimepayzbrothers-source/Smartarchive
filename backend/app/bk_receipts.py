@@ -178,11 +178,76 @@ def scan(conn: sqlite3.Connection, period_id: int) -> list[dict[str, Any]]:
     return out
 
 
+# Fachbegriffe der Betriebskosten: das Stichwort steht im Beleg oft anders („Abgabenbescheid“ → „Bescheid über
+# Grundbesitzabgaben“). Jede Alternative ist eine FTS-Phrase oder eine UND-Gruppe von Wortteilen.
+SYNONYMS: dict[str, list[str]] = {
+    "abgabenbescheid": ["grundbesitzabgaben", "gebührenbescheid", "abgaben bescheid"],
+    "grundbesitzabgaben": ["abgabenbescheid", "abgaben bescheid"],
+    "gebührenbescheid": ["grundbesitzabgaben", "gebühren bescheid"],
+    "grundsteuerbescheid": ["grundsteuer bescheid", "grundsteuer"],
+    "müll": ["abfall"], "abfall": ["müll"], "müllabfuhr": ["abfall", "müll"],
+    "abwasser": ["schmutzwasser", "niederschlagswasser", "entwässerung", "kanalbenutzung"],
+    "entwässerung": ["abwasser", "schmutzwasser", "niederschlagswasser"],
+    "schornsteinfeger": ["schornstein", "kehr", "feuerstätten"],
+    "gebäudeversicherung": ["wohngebäude", "versicherungsschein"],
+    "allgemeinstrom": ["strom", "beleuchtung"],
+    "hausmeister": ["hauswart"], "hauswart": ["hausmeister"],
+    "heizkosten": ["heizkostenabrechnung", "ista", "techem", "brunata", "minol"],
+}
+_SUFFIXES = ("bescheid", "abrechnung", "rechnung", "gebühren", "gebühr", "beitrag", "vertrag", "kosten")
+
+
+def _phrase(t: str) -> str:
+    return '"' + t.replace('"', '""') + '"'
+
+
+def _alternatives(term: str) -> list[str]:
+    low = term.lower()
+    alts = [low] + SYNONYMS.get(low, [])
+    for suf in _SUFFIXES:  # Zusammensetzung zerlegen: „Abgabenbescheid“ → „abgaben“ UND „bescheid“
+        if low.endswith(suf) and len(low) - len(suf) >= 4:
+            alts.append(f"{low[:-len(suf)]} {suf}")
+    out = []
+    for a in dict.fromkeys(alts):
+        parts = [x for x in a.split() if len(x) >= 3]
+        if parts:
+            out.append(" AND ".join(_phrase(x) for x in parts) if len(parts) > 1 else _phrase(parts[0]))
+    return out
+
+
+def expanded_match(query: str) -> str | None:
+    from .search import _TOKEN
+    terms = [t.strip(".-/") for t in _TOKEN.findall(query or "")]
+    groups = []
+    for t in terms:
+        if len(t) < 3:
+            continue
+        alts = _alternatives(t)
+        groups.append("(" + " OR ".join(f"({a})" for a in alts) + ")" if len(alts) > 1 else alts[0])
+    return " AND ".join(groups) if groups else None
+
+
+def amount_lines(text: str, limit: int = 40) -> list[dict[str, Any]]:
+    """Alle Zeilen mit Geldbeträgen aus dem erkannten Text – zur direkten Übernahme einzelner Beträge."""
+    out = []
+    for i, line in enumerate((text or "").splitlines(), 1):
+        line = line.strip()
+        am = [a for a in _amounts(line) if a > 0]
+        if not am:
+            continue
+        out.append({"line": i, "text": line[:300], "amounts": am, "cost_type": cost_type_of(line),
+                    "ignored": bool(IGNORE_LINE.search(line)), "total": bool(TOTAL_LINE.search(line))})
+        if len(out) >= limit:
+            break
+    return out
+
+
 def search_period(conn: sqlite3.Connection, period_id: int, query: str) -> dict[str, Any]:
     """Volltextsuche in den Belegen des Objekts – fest eingegrenzt auf den Abrechnungszeitraum (Belegdatum)."""
     from . import search
     p = bk.load_period(conn, period_id)
-    res = search.search(conn, query, area="vermietung", property_id=p["property_id"], date_from=p["start"], date_to=p["end"], limit=50)
+    res = search.search(conn, query, area="vermietung", property_id=p["property_id"], date_from=p["start"], date_to=p["end"],
+                        match=expanded_match(query), limit=50)
     linked = _linked(conn, period_id)
     out = []
     for r in res["results"]:
@@ -193,6 +258,7 @@ def search_period(conn: sqlite3.Connection, period_id: int, query: str) -> dict[
         entry = _entry(doc, f"Treffer: {snippet}" if snippet else "Treffer im Titel", _proposal(conn, doc, strict=False))
         entry["linked"] = doc["id"] in linked
         entry["snippet"] = r["snippet"]
+        entry["amount_lines"] = amount_lines(doc["content"] or "")
         out.append(entry)
     return {"results": out, "total": res["total"], "hint": res["hint"], "from": p["start"], "to": p["end"]}
 
