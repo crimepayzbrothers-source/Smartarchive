@@ -1,6 +1,10 @@
-# SmartArchive – Projektübergabe (Stand 29.10.2026, Commit `5d931ee`)
+# SmartArchive – Projektübergabe (Stand 31.10.2026, Commit `c614f78`)
 
-> Grundlage dieser Dokumentation: der tatsächliche Quellcode im Repository (geprüft am 29.10.2026, 100 Tests grün) und der Chatverlauf. Der allererste Teil der Entwicklung (Grundkonzept, MVP, Dropbox-Import) liegt nur als Zusammenfassung vor. Was daraus nicht sicher ableitbar ist, steht in Abschnitt 11.
+> **Grundlage:** der Quellcode im Repository (Branch `main`, Commit `c614f78`; 141 Tests grün am 31.10.2026), die frühere Übergabe vom 29.10.2026 samt Ergänzung (in diese Fassung eingearbeitet, beide ersetzt) und der Chatverlauf vom 29.–31.10.2026.
+>
+> **Kennzeichnung:** ✅ implementiert (Code vorhanden, getestet, gepusht) · 🟡 teilweise · 📋 beschlossen, nicht umgesetzt · 💡 vorgeschlagen/angeboten, nicht entschieden · ❌ verworfen · ❓ unklar.
+>
+> **„Implementiert“ heißt hier: im Repository und durch Tests abgedeckt. Ob der Stand auf dem Server läuft, ist offen** (siehe 7 D und 11).
 
 ---
 
@@ -8,17 +12,16 @@
 
 | Punkt | Inhalt |
 | --- | --- |
-| Projektname | **SmartArchive** |
-| Eigentümer / Nutzer | Can (Einzelnutzer, Landesbeamter, Vermieter mehrerer Objekte in Bad Sobernheim) |
-| Zweck | Privates, selbst gehostetes Dokumentenarchiv, das das Dropbox-Abo (11,99 €/Monat) ablöst |
-| Hauptziel | Dokumente per Foto/Upload erfassen, Texterkennung, Volltextsuche, automatische Ablage in zwei **strikt getrennten Bereichen „Privat“ und „Vermietung“**, Belege der Vermietung je Mietobjekt als Aufwand dokumentieren und für die Anlage V exportieren |
-| Ausdrücklich nicht | **Keine steuerliche Berechnung oder Bewertung** (keine AfA, kein Überschuss, keine Anlage-V-Zeilenwerte). Die App dokumentiert und exportiert nur. |
-| Zielgruppe | Ausschließlich Can selbst (privat). Veröffentlichung in App Stores später optional, nicht geplant. |
-| Plattformen | Installierbare Web-App (PWA) auf Android (Chrome), zusätzlich Desktop-Browser |
-| Nutzungskonzept | Beleg fotografieren oder hochladen, die App erkennt Text, Datum, Betrag, Absender und Objekt, legt sicher erkannte Dokumente selbst ab und stellt Unsicheres als Rückfrage in den „Eingang“ |
-| Datenschutz | EU-Hosting (netcup, Nürnberg), Zugriff nur über Tailscale-VPN, optionale KI nur über Mistral (EU) |
-| Stand | Version 0.1 (MVP) plus umfangreiche Erweiterungen, **produktiv im Einsatz**. Rund 3.857 Dateien und 3,3 GB wurden aus Dropbox importiert. Nächtliche verschlüsselte Sicherung nach Backblaze B2 ist eingerichtet und getestet. |
-| Langfristige Vision | Vollständiger Dropbox-Ersatz mit möglichst wenig Handarbeit bei der Belegerfassung für die Vermietung |
+| Projektname | **SmartArchive** (Manifest-Kurzname „Archiv“) |
+| Eigentümer/Nutzer | Can, Einzelnutzer. Landesbeamter (Finanzamt), privater Vermieter. Kommuniziert auf Deutsch, Sie-Form. |
+| Zweck | Selbst gehostetes Dokumentenarchiv als Ersatz für das Dropbox-Abo (11,99 €/Monat), erweitert um eine **Vermietungsverwaltung**: Mieter, Einnahmen, Betriebskostenabrechnung, Mahnwesen, Kaution |
+| Kernprinzip | Zwei **strikt getrennte Bereiche „Privat“ und „Vermietung“**. Belege der Vermietung je Mietobjekt als Aufwand dokumentieren und exportieren. **Keine steuerliche Berechnung oder Bewertung.** |
+| Zielgruppe | Nur der Nutzer selbst. Ein kommerzielles Angebot wurde einmal als Frage besprochen (Einschätzung „kommerzielles Potenzial“), **es gibt keinen Beschluss** dazu. |
+| Plattformen | Installierbare Web-App (PWA) für Android/Chrome, zusätzlich Desktop-Browser |
+| Nutzungskonzept | Beleg fotografieren, hochladen oder an die App teilen. Die App erkennt Text, Datum, Betrag, Absender und Objekt, legt sicher Erkanntes selbst ab und stellt Unsicheres als Rückfrage in den „Eingang“. Mietkonto per CSV-Import. |
+| Vermietete Objekte (laut Nutzer) | **Nur Hauptstraße 15, 55758 Schmidt-Hachenbach**, 5 Parteien, Wohnungen **EG, OG links, OG Mitte, OG rechts, Galerie**. Berliner Straße 21 ist selbst bewohnt. Zu Berliner Straße 23 und 32 gibt es ältere Angaben (Hausverwalter Herr Schmitz); welche Rolle sie heute spielen, ist ❓. Häuser mit mehreren Wohnungen, keine WEG. Zentralheizung mit Ablesefirma. Mieterbestand bisher in objego (kein Export vorhanden). Reines Mietkonto bei der Commerzbank. |
+| Stand | Produktiv im Einsatz (rund 3.857 Dateien bzw. 3,3 GB aus Dropbox importiert). Nächtliches Backup nach Backblaze B2 läuft. Seit dem 29.10. kamen sehr viele Vermietungsfunktionen hinzu (Abschnitt 3.9 ff.). |
+| Langfristige Vision | Dropbox-Ersatz mit möglichst wenig Handarbeit. Die Vermietungsverwaltung soll objego ablösen (Mieter, Einnahmen, Betriebskostenabrechnung, Mahnwesen). |
 
 ---
 
@@ -28,194 +31,303 @@
 
 | Schicht | Technologie |
 | --- | --- |
-| Backend | Python 3.12, **Starlette** (ASGI), uvicorn |
-| Datenbank | **SQLite** (eine Datei, WAL-Modus), Volltextsuche **FTS5** mit Trigramm-Tokenizer (Fallbacks: `trigram`, `unicode61`) |
-| Hintergrundverarbeitung | Eigener Worker-Prozess (`app.worker`) mit Auftragstabelle `jobs` (Priorität, Wiederholversuche) |
-| Texterkennung | OCRmyPDF + Tesseract (deu, eng), Fallback Tesseract direkt. Digitale PDFs ohne OCR. Office-Dateien über LibreOffice (headless) nach PDF. |
+| Backend | Python 3.12, **Starlette** (ASGI), uvicorn, pydantic v2 |
+| Datenbank | **SQLite** (WAL), **FTS5** mit Trigramm-Tokenizer (findet Wortteile ab 3 Zeichen; Fallback `unicode61`) |
+| Worker | Eigener Prozess `python -m app.worker`, Auftragstabelle `jobs` (Priorität, höchstens 3 Versuche, n-ter Versuch frühestens n Minuten später). `INLINE_WORKER=1` lässt ihn als Thread laufen (Tests/Entwicklung). |
+| Texterkennung | OCRmyPDF und Tesseract (deu, eng), digitale PDFs ohne OCR, Office-Dateien per LibreOffice (headless, Zeitlimit 900 s) nach PDF |
 | PDF/Bild | pypdf, img2pdf, Pillow, poppler-utils, ghostscript, qpdf, unpaper |
-| Exporte | openpyxl (Excel), reportlab (PDF), csv |
-| KI (optional) | Mistral API (EU), Modell `mistral-small-latest`, nur aktiv mit `MISTRAL_API_KEY` |
-| Frontend | **React 19** + TypeScript, gebaut mit **esbuild** (`frontend/build.mjs`), keine weiteren Laufzeitbibliotheken, eigenes CSS |
-| PWA | `manifest.webmanifest` mit Share-Target, Service Worker `sw.js` (Cache `sa-shell-v2`, nur die App-Hülle) |
-| Deployment | Docker Compose (Dienste `app` und `worker` aus einem Image), netcup VPS Lite (Debian 13), Zugriff über **Tailscale Serve** (HTTPS) |
-| Backup | **restic** → **Backblaze B2** (Region EU Central, Bucket `smartarchive-can-2303`), Überwachung über **healthchecks.io** |
-| Repository | Privat: `github.com/crimepayzbrothers-source/Smartarchive`, Branch `main` |
+| PDF-Erzeugung | **reportlab** (Exporte, Betriebskosten, Mahnungen, Abmahnungen, Kautionsschreiben, Einnahmenübersicht). Schrift: DejaVu Sans, falls vorhanden, sonst Helvetica. |
+| Exporte | openpyxl (Excel), csv, zipfile |
+| KI (optional) | Mistral API (EU), Modell `mistral-small-latest`, nur aktiv mit `MISTRAL_API_KEY`. Ob der Schlüssel gesetzt ist, ist ❓. |
+| Frontend | **React 19** und TypeScript, gebaut mit **esbuild** (`frontend/build.mjs`), keine weiteren Laufzeitbibliotheken, eigenes CSS (`styles.css`) |
+| PWA | `frontend/public/manifest.webmanifest` (Share-Target für PDF und Bilder), Service Worker `sw.js` (Cache nur für die App-Hülle, Share-Target-Puffer `sa-share`) |
+| Deployment | Docker Compose, Dienste `app` und `worker` aus einem Image. netcup VPS Lite 1 G12.5s (Nürnberg, Debian 13). Zugriff nur über **Tailscale Serve** (HTTPS), die App lauscht auf `127.0.0.1:8080`. |
+| Backup | **restic** nach **Backblaze B2** (EU Central, Bucket `smartarchive-can-2303`), Überwachung über **healthchecks.io** |
+| Repository | Privat: `github.com/crimepayzbrothers-source/Smartarchive`. GitHub meldet „repository moved“ von der kleingeschriebenen Adresse, die Weiterleitung funktioniert. Branch `main`. |
 
 **Python-Abhängigkeiten** (`backend/requirements.txt`): starlette, uvicorn[standard], pydantic, python-multipart, pillow, img2pdf, pypdf, pytesseract, openpyxl, reportlab.
-**Frontend** (`frontend/package.json`): react, react-dom ^19.2; dev: esbuild ^0.25, typescript ^5.8, @types/react(-dom).
-
-Die SQLite-Entscheidung war bewusst: Für einen Einzelnutzer ist sie schneller, braucht keinen Datenbankserver und lässt sich als eine Datei sichern.
+**Frontend** (`frontend/package.json`): react, react-dom ^19.2; zur Entwicklung esbuild ^0.25, typescript ^5.8, @types/react(-dom).
 
 ### 2.2 Ordnerstruktur
 
 ```
 backend/app/
-  main.py            App, Routen, Middleware, einmalige Datenkorrekturen beim Start
+  main.py            App, Routen, Sicherheits-Header, einmalige Datenkorrekturen beim Start (Einmal-Marker)
   config.py          Einstellungen aus Umgebungsvariablen
-  db.py              Verbindung, versionierte Migrationen (MIGRATIONS 1–8), Helfer (row/rows/audit/settings)
+  db.py              Verbindung, Migrationen MIGRATIONS 1–18, Helfer (row/rows/tx/audit/get_setting/set_setting/now)
   seed.py            Bereiche, Ordnerbaum, Ausgabenkategorien, Standard-Einstellungen
-  security.py        scrypt-Passwörter, TOTP (2FA), Sitzungen
-  storage.py         Originale (SHA-256, schreibgeschützt), abgeleitete Dateien, MIME-Erkennung
-  documents.py       Upload/Ingest, Verarbeitungspipeline, Volltextindex, Feldänderungen
-  ocr.py             Text aus PDF, OCR, Office→PDF, Seitenbilder
-  extract.py         Erkennung: Datum (mit Sicherheit), Beträge, Objekt, Absender, Dokumenttyp, Stichwörter
-  classify.py        Automatische Ablage (Regel → Verlauf → KI → Stichwörter), Entscheidung, Voreinstellungen
-  invoices.py        Rechnungslogik: Felder, Ausgaben automatisch erfassen, Datumsprüfung, „Aus Beleg auslesen“
-  duplicates.py      Inhaltliche Dublettenerkennung und Auflösung
-  titles.py          Automatische Titel
-  banking.py         Kontoumsätze (CSV), Abgleich mit Rechnungen, Lernen, Entscheidungen
-  exports.py         Journal, CSV, Excel, PDF-Paket (mit/ohne Belege), Gesamt-ZIP, Prüfhinweise
-  search.py          FTS5-Suche mit Hervorhebung
-  mistral.py         KI-Aufrufe (Dokumente, Umsätze, Rechnungsfelder)
-  importer.py        Massenimport aus Dropbox oder Ordner (CLI)
-  import_mappings/dropbox.json  Ordnerzuordnung für den Import
-  worker.py          Auftragsabarbeitung (process, reclassify)
-  backup.py          Konsistente DB-Kopie für das Backup
-  api/ auth.py, docs.py, bank.py, realestate.py, meta.py, common.py
-backend/static/      Gebaute PWA (wird vom Server ausgeliefert, im Git eingecheckt)
-backend/tests/       pytest (100 Tests)
-frontend/src/        App.tsx, main.tsx, api.ts, lib.tsx, extract.ts, scan.ts, styles.css, pages/, components/
-frontend/public/     sw.js, manifest.webmanifest, icon.svg
+  security.py        scrypt, TOTP, Sitzungen, LoginThrottle
+  storage.py         Originale (SHA-256, unveränderlich), abgeleitete Dateien, MIME-Sniffing
+  documents.py       Upload/Ingest, Verarbeitung, Volltextindex, best_pdf, display_filename
+  ocr.py, extract.py, classify.py, invoices.py, duplicates.py, titles.py, search.py, mistral.py
+  banking.py         Mietkonto: CSV, Abgleich, Zinsanteil, Mieter-Erkennung, Entscheidungen
+  exports.py         Ausgaben-Journal, CSV, Excel, PDF-Paket, Gesamt-ZIP
+  importer.py, worker.py, backup.py
+  tenancy.py         Mietverhältnisse: Prüfungen, Speichern, Beenden, Belegung/Leerstand
+  tenancy_extract.py Auslesen aus Mietvertrag/Screenshot (Regeln, optional KI), Seitenbilder
+  betriebskosten.py  Rechenkern der Betriebskostenabrechnung, Prüfungen, Fassungen
+  bk_pdf.py          PDF der Abrechnung; gemeinsamer Briefkopf letterhead() für alle Schreiben
+  bk_receipts.py     Belegprüfung: Bescheide zerlegen, Volltextsuche im Zeitraum, Übernahme
+  income.py          Einnahmen: Soll/Ist je Monat, Aufteilung Kalt/BK/HK, Übersicht
+  income_pdf.py      Einnahmenübersicht als PDF
+  dunning.py         Mahnwesen (Zahlungserinnerung/Mahnung Miete); archive_letter(), default_salutation()
+  abmahnung.py       Abmahnungen; Werktags-/Feiertagslogik RLP
+  deposit.py         Mietkaution
+  deposit_letter.py  Zahlungserinnerung/Mahnung zur Kaution
+  api/  auth, docs, meta, realestate, bank, tenants, bk, income, dunning, abmahnung, deposit, common
+backend/static/      Gebaute PWA (vom Server ausgeliefert, im Git eingecheckt, Assets mit Prüfsumme im Namen)
+backend/tests/       pytest, 23 Testdateien, 141 Tests
+frontend/src/        App.tsx, main.tsx, api.ts, lib.tsx, extract.ts, scan.ts, styles.css
+  pages/             Home, Inbox, Archive, DocumentPage, Properties, Tenants, Income, Betriebskosten,
+                     Dunning (Mahnungen), Abmahnung, Deposit (Kaution), Expenses, Transactions, Settings, Login
+  components/        ui.tsx, UploadSheet, Scanner, Suggestion, InvoiceCard, DateQuestion, DuplicateCard,
+                     AmountPicker, TxCard, SwipeRow (inkl. ConfirmDelete), shareDocs.ts
+frontend/public/     sw.js, manifest.webmanifest, Icons
 scripts/             backup.sh, restore-test.sh
-docs/                diese Übergabe
-data/ (Server)       smartarchive.sqlite3, files/originals/…, files/derived…, backup/, cache/  (nicht im Git)
+docs/                PROJEKT-UEBERGABE.md (diese Datei), BETRIEBSKOSTEN.md (Fachdokumentation)
+data/ (Server)       smartarchive.sqlite3, files/, backup/, cache/   (nicht im Git)
 ```
 
 ### 2.3 Zusammenspiel
 
-1. **Upload** (`POST /api/upload`): Die Datei wird per SHA-256 als unveränderliches Original gespeichert. Byte-gleiche Dateien werden sofort als Dublette erkannt. Ein Dokument mit `status='processing'` und ein Job `process` entstehen.
-2. Der **Worker** führt `documents.process` aus:
-   1. Textextraktion: digital, OCR oder Office→PDF, durchsuchbares PDF als abgeleitete Datei.
-   2. Inhaltliche Dublettenprüfung (`duplicates.find`).
-   3. Einordnung (`classify.analyze`), dann Entscheidung (`classify.decide`): ablegen (`filed`) oder Eingang (`inbox`) mit Vorschlag.
-   4. Bei Dublettenverdacht: `duplicates.mark`, nichts ablegen, nichts zählen.
-   5. Ausgabe erfassen (`invoices.capture_on_upload` / `ensure_expense`).
-   6. Volltextindex aktualisieren.
-3. Das **Frontend** fragt `/api/inbox`, `/api/documents` usw. ab. Entscheidungen des Nutzers laufen über PATCH/POST-Endpunkte. Jede Änderung landet im `audit_log`.
-4. **Import-Läufe** (`app.importer`) erzeugen Dokumente mit `preset` (fester Zielordner aus dem Mapping). Für sie entfällt die Einordnung.
+1. **Upload** (`POST /api/upload`): Das Original wird per SHA-256 unveränderlich gespeichert. Byte-gleiche Dateien gelten sofort als Dublette. Es entstehen ein Dokument mit `status='processing'` und ein Job `process`. Optional sind `property_id` (Objekt), `upload_area` und `tenancy_id` möglich; mit `tenancy_id` wird das Dokument dem Mietverhältnis, Objekt und der Einheit zugeordnet.
+2. Der **Worker** führt `documents.process` aus: Text (digital, OCR oder Office), inhaltliche Dublettenprüfung, Einordnung (`classify.analyze`/`decide`), Ausgabe erfassen (`invoices.capture_on_upload`/`ensure_expense`), Volltextindex.
+3. Das **Frontend** nutzt die JSON-API. Jede Änderung wird in `audit_log` protokolliert, ohne Namen oder Kontaktdaten von Mietern.
+4. **Vermietungsmodule** greifen auf gemeinsame Daten zu: Mietverhältnisse (`tenancies`) → Soll der Einnahmen. Mietkonto (`transactions.tenancy_id`) und Barzahlungen (`rent_receipts`) → Ist. Ausnahmen (`rent_exceptions`) → offene Monate → Mahnwesen und Kündigungsschwellen-Hinweis. Ausgaben und Archivbelege → Betriebskosten.
+5. **Erzeugte Schreiben** (Mahnung, Abmahnung, Kautionsschreiben, Betriebskostenabrechnung) speichern einen **Snapshot** (JSON), damit das PDF später unverändert reproduzierbar ist, und werden als Dokument im Archiv abgelegt: Vermietung › „Mietverträge und Mieter“, bei Betriebskosten › „Nebenkosten“.
 
-### 2.4 Authentifizierung
+### 2.4 Authentifizierung und Sicherheit
 
-- Ein Benutzerkonto. Einrichtung beim ersten Aufruf mit `SETUP_TOKEN` aus `.env`.
-- Passwort mit scrypt (n=2^14, r=8, p=1). Optional TOTP-2FA (`/api/auth/totp/*`).
-- Sitzungscookie `sa_session` (HttpOnly, SameSite, Secure). In der Datenbank liegt nur der SHA-256 des Tokens. Laufzeit 30 Tage (`SESSION_DAYS`).
-- CSRF-Schutz: Schreibende Anfragen brauchen den Header `X-Requested-With: SmartArchive`. Alle Änderungen werden protokolliert. Gelöschte Dokumente gehen in den Papierkorb (`deleted_at`).
+- Ein Benutzerkonto. Einrichtung mit `SETUP_TOKEN`. Passwort mit scrypt, optional TOTP-2FA.
+- Sitzungscookie `sa_session` (HttpOnly, SameSite, Secure, solange `COOKIE_SECURE` nicht 0 ist). In der Datenbank liegt nur der Hash. Laufzeit 30 Tage.
+- **CSRF:** Schreibende Anfragen brauchen den Header `X-Requested-With: SmartArchive`, sonst 403 (`api.ts` setzt ihn).
+- **Bremse bei Fehlversuchen** (`LoginThrottle`): ab dem 5. Fehlversuch exponentielle Sperre, höchstens 900 s, nur im Arbeitsspeicher.
+- **Sicherheits-Header:** strikte CSP (nur `'self'`, Bilder auch `data:`/`blob:`), `X-Frame-Options: SAMEORIGIN`, `Referrer-Policy: no-referrer`, `Permissions-Policy: camera=(self)`, API-Antworten mit `no-store`. **Folge: keine externen Skripte, Schriften oder CDNs im Frontend.**
+- Papierkorb statt Löschen (`deleted_at`).
 
 ### 2.5 Konfiguration (`.env`)
 
-`SETUP_TOKEN`, `MISTRAL_API_KEY` (optional), `MISTRAL_MODEL`, `MISTRAL_BASE_URL`, `COOKIE_SECURE` (Standard 1), `MAX_UPLOAD_MB` (Standard 40), `SESSION_DAYS` (30), `DATA_DIR` (/data), `STATIC_DIR`. Für den Import kommt `DROPBOX_TOKEN` hinzu, nur temporär.
+`SETUP_TOKEN`, `MISTRAL_API_KEY` (optional), `MISTRAL_MODEL`, `MISTRAL_BASE_URL`, `COOKIE_SECURE` (Standard 1), `MAX_UPLOAD_MB` (40), `SESSION_DAYS` (30), `DATA_DIR` (/data), `STATIC_DIR`, `INLINE_WORKER`. Für den einmaligen Dropbox-Import kam `DROPBOX_TOKEN` hinzu.
 
-### 2.6 Frontend-Zustand
+### 2.6 Frontend-Zustand und Routing
 
-Kein State-Management-Framework. Hash-Routing (`#/…`) mit `useRoute`, Datenladen über den Hook `useLoad`, API-Helfer `get/post/patch` in `api.ts`, Toasts über `ToastProvider`. Das Farbschema wird in `localStorage` gespeichert.
+- Kein State-Framework. Hash-Routing über `useRoute` in `lib.tsx`, Laden über `useLoad`, API-Helfer `get/post/put/patch/del` in `api.ts`.
+- **Toasts:** als `popover="manual"` (Top-Layer), damit sie auch über offenen Dialogen sichtbar sind.
+- **Dialoge** (`Sheet`): natives `<dialog>` mit `showModal()`.
+- **Zurück-Navigation:**
+  - `scrollMemo` merkt die Scrollposition je Adresse, `takeScroll()` stellt sie wieder her.
+  - `rememberReturn`/`returnTarget()` (sessionStorage `sa-return`) liefern die letzte Seite außerhalb eines Dokuments, damit „Zurück“ auch nach einem Neuladen der App durch Android funktioniert.
+  - `replaceRoute(path, params)` schreibt Filter und Zustand ohne neuen Verlaufseintrag in die Adresse.
+- **Gerätespeicher** (`localStorage`): Farbschema; Auswahl der Belegprüfung je Abrechnung (`sa-bk-sel-{periodId}`).
+
+**Routen (Hash):**
+- Start, Eingang, Archiv und Suche: `#/`, `#/eingang`, `#/archiv` (`?bereich=&kategorie=&objekt=&jahr=&tag=&favorit=`), `#/suche?q=`.
+- Dokument: `#/dokument/{id}`.
+- Objekte und Mieter: `#/objekte`, `#/objekt/{id}`, `#/mieter`, `#/mieter/{id}`.
+- Einnahmen, Ausgaben, Umsätze: `#/einnahmen` (`?jahr=&objekt=`), `#/ausgaben`, `#/umsaetze`.
+- Betriebskosten: `#/betriebskosten`, `#/betriebskosten/{id}?schritt=&belege=1&suche=`.
+- Sonstiges: `#/einstellungen`, `#/teilen`.
 
 ### 2.7 Build, Test, Deployment
 
-- **Frontend bauen:** `cd frontend && npm install && npm run build`. Ergebnis landet in `backend/static`, mit Prüfsummen-Dateinamen `main-[hash].js/.css`, damit Updates auf dem Handy ankommen.
-- **Tests:** `cd backend && python -m pytest -q` (100 Tests).
-- **Server-Update:** `cd ~/smartarchive && git pull && docker compose up -d --build`. Migrationen laufen beim Start automatisch.
-- Die App lauscht nur auf `127.0.0.1:8080`. Tailscale stellt sie per HTTPS unter `https://v2202610445998547434.taila12eaf.ts.net/` bereit.
-- Im Docker-Image läuft die App als Benutzer `smartarchive` (UID 1000). Der Datenordner `./data` ist als `/data` eingebunden.
+- **Frontend:** `cd frontend && npm install && npm run build`. Das Ergebnis landet in `backend/static` mit Prüfsumme im Dateinamen (`main-[hash].js/.css`), damit Updates auf dem Handy ankommen. Das gebaute `backend/static` wird mit eingecheckt.
+- **Tests:** `cd backend && python -m pytest -q`, derzeit 141 grün.
+- **Server-Update:**
+  ```
+  cd ~/smartarchive && git pull && git log --oneline -1 && docker compose up -d --build 2>&1 | tail -n 25
+  ```
+  Migrationen laufen beim Start automatisch. Für Änderungen nur an `scripts/` genügt `git pull`.
+- Besonderheiten der Claude-Arbeitsumgebung (für einen neuen Chat relevant):
+  - Die npm-Registry war gesperrt. Gebaut wurde mit vorinstallierten Paketen per Symlink nach `frontend/node_modules` und `NODE_PATH=/opt/npm-tools/node_modules npm run build`.
+  - `tsc` war nicht verfügbar. **Die TypeScript-Typprüfung (`tsc --noEmit`) ist seit dem 29.10. nicht gelaufen**, esbuild prüft keine Typen.
+  - Zum lokalen Testen: uvicorn mit `DATA_DIR=…`, `SETUP_TOKEN=…`, `COOKIE_SECURE=0`; Worker separat mit `python -m app.worker`; Oberflächentests mit Playwright und Pixel-7-Emulation.
 
 ---
 
 ## 3. Vollständiger Funktionsumfang
 
-Status-Legende: ✅ implementiert (Code vorhanden, getestet, gepusht) · 🟡 teilweise · 📋 beschlossen · 💡 vorgeschlagen · ❌ verworfen
+### 3.1 Erfassen ✅
 
-### 3.1 Erfassen
-
-| Funktion | Verhalten | Status |
-| --- | --- | --- |
-| Foto aufnehmen | Kamera, mehrere Fotos ergeben ein PDF | ✅ |
-| **Scanner nach Aufnahme** | Automatische Kantenerkennung, Ecken manuell verschiebbar („Ecken prüfen“), Zuschnitt und Perspektivkorrektur (`Scanner.tsx`, `scan.ts`). Das Originalfoto bleibt zusätzlich als `capture` erhalten (`captures`/`capture_index` im Upload). | ✅ |
-| PDF-/Bild-Upload | Auch Drag-and-drop. Akzeptiert PDF, JPEG, PNG, WebP, TIFF und beim Import Office-Dateien. | ✅ |
-| Teilen aus Android-Apps | PWA-Share-Target `/share-target`, Service Worker puffert die Dateien | ✅ |
-| **Upload direkt zum Mietobjekt** | Bereich Vermietung im Upload-Dialog: Objekt-Chips zur Auswahl. Gibt es nur ein Objekt, wird es automatisch gewählt. Das gewählte Objekt (`property_id`) wird übernommen, das Dokument direkt abgelegt, der Ordner ist prüfbar unter „Automatisch abgelegt“. | ✅ |
-| Bereichswahl beim Upload | `upload_area`: `auto` / `privat` / `vermietung` | ✅ |
-
-### 3.2 Verarbeitung und Ablage
-
-| Funktion | Verhalten | Status |
-| --- | --- | --- |
-| Originale unveränderlich | SHA-256, schreibgeschützt gespeichert, abgeleitete PDFs getrennt | ✅ |
-| Texterkennung | Digitale PDFs direkt, sonst OCR. Mindestens 30 Zeichen pro Seite gelten als Textlage. | ✅ |
-| **Automatische Ablage** | Reihenfolge: 1. eigene Regeln (Sicherheit 0,99), 2. bestätigter Verlauf je Absender, 3. KI (optional), 4. Stichwörter. Automatisch abgelegt wird ab `auto_threshold` 0,9, ein Vorschlag erscheint ab `suggest_threshold` 0,5. | ✅ |
-| Blocker für die Automatik | Keine Kategorie erkannt, Sicherheit unter der Schwelle, Bereich `auto` ohne Regel/Verlauf, Vorschlag im anderen Bereich als gewählt, Mietobjekt unklar (wenn Objekte existieren), Automatik ausgeschaltet | ✅ |
-| **Bereichswechsel nie automatisch** | Privat ↔ Vermietung entscheidet nur der Nutzer | ✅ (Grundregel) |
-| KI pro Ordner sperrbar | Voreingestellt gesperrt: Gesundheit, Familie. Bei gesperrter KI wird nur lokal per Stichwörtern geprüft. Die KI bekommt höchstens 6.000 Zeichen Text, nie die Datei. Ihr Begründungszitat muss wörtlich im Dokument stehen, sonst wird die Sicherheit gedeckelt. | ✅ |
-| Lernen aus Korrekturen | Tabelle `corrections`, gelernte Regeln (`rules.origin='learned'`) | ✅ |
-| Rückgängig | `POST /api/documents/{id}/undo` für automatische Ablagen | ✅ |
-| **Automatische Titel** | `titles.make_title`: aus spezifischem Dokumenttyp, Betreff/Position, Absender und Datum. Generische Titel und Dateinamen („IMG_…“, „Scan…“) werden ersetzt (`is_generic`), eigene Titel nie. | ✅ |
-| **Inhaltliche Dublettenprüfung** | Siehe 5.6. Treffer bleiben im Eingang unter „Mögliche Duplikate“ mit drei Optionen: **Überschreiben** (neue Dateien ersetzen das vorhandene Dokument, alte Originale bleiben als `replaced` erhalten), **Verwerfen** (Upload in den Papierkorb), **Behalten** (kein Duplikat) | ✅ |
-
-### 3.3 Datum
-
-| Funktion | Verhalten | Status |
-| --- | --- | --- |
-| **Datum nur aus dem erkannten Text** | Nie aus Upload-Datum, nie aus Dateiname oder Titel | ✅ |
-| Sicherheitsstufe | `date_status` = `sure` / `unsure`, `date_candidates` (bis 6) mit Zeile, beschriftet, Fälligkeitsdatum | ✅ |
-| **Rückfrage „Datum prüfen“** | Im Eingang erscheinen Belege ohne Datum oder mit unsicherem Datum. Vorschlag mit Bestätigung oder Auswahl aus den Kandidaten oder Eingabe (`DateQuestion.tsx`, `POST /api/documents/{id}/date`). Die Bestätigung übernimmt das Datum auch in die Ausgaben. | ✅ |
-
-### 3.4 Ausgaben (Vermietung)
-
-| Funktion | Verhalten | Status |
-| --- | --- | --- |
-| **Sofortige Erfassung beim Upload** | Ein erkannter Rechnungsbetrag wird sofort als Ausgabe angelegt (`capture_on_upload`). Solange das Objekt unklar ist, als `entwurf`. Mit der Ablage in Vermietung und bekanntem Objekt wird sie `bestaetigt` und zählt. Bei Ablage in Privat wird sie gelöscht. | ✅ |
-| **Automatisch zählen** | Entscheidung „Sofort zählen“: automatisch ausgelesene Beträge zählen sofort, gekennzeichnet als `origin='auto'` („automatisch ausgelesen“) | ✅ |
-| **Zahlungsdatum = Rechnungsdatum** | Ohne „bezahlt am“ oder Barzahlung im Beleg wird das Rechnungsdatum als Zahlungsdatum angenommen (`paid_assumed=1`, Anzeige „angenommen“). Jederzeit korrigierbar. Ein passender Kontoumsatz ersetzt es durch das Buchungsdatum. | ✅ |
-| Barzahlung erkennen | „bar bezahlt“, Kassenbon, EC-/Kartenzahlung (`_POS_PAYMENT`, `_RECEIPT_PAYMENT`): Das Zahlungsdatum ist dann sicher | ✅ |
-| Ausgabe manuell | Am Dokument: Betrag, Rechnungs-/Zahlungsdatum, Empfänger, Kategorie, Objekt/Einheit, Notiz, Status `entwurf`/`bestaetigt`/`ungeklaert` | ✅ |
-| **„Aus Beleg auslesen“** | Knopf im Ausgabenformular: füllt Datum, Betrag, Empfänger, Kategorie, Rechnungsnummer (`GET /api/documents/{id}/extract`, lokal plus optional KI) | ✅ |
-| **Betrags-Auswahlliste** | Kein Raten des Höchstbetrags mehr. Ist der Endbetrag nicht eindeutig beschriftet, zeigt `AmountPicker.tsx` alle erkannten Beträge mit Kennzeichnung (z. B. „Gesamt“, „MwSt“, „Netto“) zur Auswahl. | ✅ |
-| **Rechnungs-Abfrage mit Objektzuordnung** | `InvoiceCard.tsx`: fragt bei Rechnungen das Objekt ab, oder „keine Ausgabe“ (`no_expense`, z. B. Angebot oder privat bezahlt) | ✅ |
-| **Nacherfassung** | „Rechnungen ohne Ausgabe“ in Ausgaben (`MissingPanel`, `/api/expenses/missing`, `/drafts`) | ✅ |
-| Grundsteuer/Abgaben | Bescheide mit Kategorie `grundsteuer`/`grundbesitzabgaben` werden ebenfalls erfasst | ✅ |
-| Jahreszuordnung | `COALESCE(paid_on, invoice_date, doc_date)`, **kein Upload-Datum** | ✅ |
-| Prüfhinweise | Objekt fehlt, Erhaltungsaufwand nur aus Kontoumsatz ohne Beleg, ungeklärt, ohne Zahlungsdatum, angenommene Zahlungsdaten, Dubletten, anschaffungsnahe Herstellungskosten (Hinweis § 6 Abs. 1 Nr. 1a EStG, keine Berechnung) | ✅ |
-
-### 3.5 Mietkonto (Bank)
-
-| Funktion | Verhalten | Status |
-| --- | --- | --- |
-| CSV-Import | Commerzbank-Export (reines Mietkonto). Spaltenerkennung für gängige deutsche Banken, Kodierung automatisch, Duplikatschutz per `fingerprint` | ✅ |
-| Abgleich | 1. passende erfasste Rechnung (Betrag, Name) → `beleg`, 2. Verlauf je Gegenpartei (`party_key`: Gläubiger-ID > IBAN > Name), 3. KI (höchstens 40 je Import), 4. Stichwörter (Miete, Darlehen, Hausgeld) | ✅ |
-| Automatik | Sichere Treffer (≥ 0,9) aus Beleg oder Verlauf werden angewendet (Status `auto`, zur Kontrolle im Eingang). Der Rest steht unter „Umsätze klären“ (`TxCard.tsx`). | ✅ |
-| Entscheidung | Art: ausgabe / einnahme / ignoriert, Objekt, Kategorie, Teilbetrag (z. B. nur Zinsanteil). Rückgängig möglich. | ✅ |
-| Online-Banking direkt (FinTS/PSD2) | Besprochen. Umgesetzt wurde stattdessen der CSV-Import. | ❌ / nicht umgesetzt |
-
-### 3.6 Archiv, Suche, Objekte
-
-| Funktion | Status |
+| Funktion | Verhalten |
 | --- | --- |
-| Archiv nach Bereich/Ordner, Filter Objekt, Jahr, Tag, Favorit | ✅ |
-| Volltextsuche mit Wortteilen und Hervorhebung | ✅ |
-| Dokumentansicht: Seitenbilder, Text, Felder ändern, neu verarbeiten (`/run/{kind}`) | ✅ |
-| **PDF im nativen Viewer öffnen und teilen** (Web Share API, `FileActions` in `DocumentPage.tsx`) | ✅ |
-| Mietobjekte und Einheiten (Stammdaten, Ausgaben nach Jahr, Dokumente je Objekt) | ✅ |
-| Ordner, Stichwörter und KI-Sperre je Ordner, Regeln, Korrespondenten verwalten | ✅ |
+| Foto aufnehmen und Scanner | Kantenerkennung, Ecken verschiebbar, Perspektivkorrektur, Filter (Dokument/Farbe/Original), Drehen, mehrere Seiten. Das Originalfoto bleibt als `capture` erhalten. |
+| Upload | PDF, JPEG, PNG, WebP, TIFF (beim Import auch Office-Dateien), mehrere Dateien, Drag-and-drop |
+| **Teilen an die App** | Share-Target `/share-target` (POST, mehrere Dateien, nur `application/pdf` und `image/*`). Der Service Worker puffert die Dateien, danach führt `#/teilen` in den Upload. Voraussetzung: Installation über Chrome → „App installieren“. |
+| Upload direkt zum Objekt | Objekt-Chips im Bereich Vermietung; das Dokument wird mit `property_id` direkt abgelegt |
+| Bereichswahl | `upload_area`: auto / privat / vermietung |
 
-### 3.7 Exporte
+### 3.2 Verarbeitung, Ablage, Datum, Dubletten ✅
 
-| Export | Inhalt | Status |
-| --- | --- | --- |
-| CSV | Journal, Semikolon, Excel-tauglich | ✅ |
-| Excel | Übersicht Objekt × Monat, alle Positionen, ein Blatt je Objekt mit Monats-Zwischensummen, Blatt „Offen“ | ✅ |
-| PDF mit Belegen | Übersicht, Halbjahrestabellen, danach alle Belege, jeweils mit Belegnummer im zusätzlichen Kopfrand (`STAMP_BAND=22`) | ✅ |
-| **PDF ohne Belege** | Nur Übersicht und Tabellen, überlappungsfrei (umbrechende Zellen, per Test mit pdfplumber geprüft) | ✅ |
-| Sortierung | Chronologisch, Spalten: Lfd. Nr., Beleg-Nr., Datum, Monat, Jahr, Zahlungsdatum, Rechnungsdatum, Jahr nach, Objekt … mit durchgehender Belegnummer | ✅ |
-| Gesamtexport ZIP | Alle Originale, durchsuchbare PDFs, Metadaten | ✅ |
+- **Automatische Ablage** in dieser Reihenfolge: eigene Regeln (0,99), bestätigter Verlauf je Absender, KI (optional), Stichwörter. Automatisch abgelegt wird ab `auto_threshold` 0,9, ein Vorschlag erscheint ab `suggest_threshold` 0,5.
+- **Blocker:** keine Kategorie erkannt, Sicherheit zu niedrig, Bereich `auto` ohne Regel oder Verlauf, Vorschlag im anderen Bereich, Mietobjekt unklar, Automatik ausgeschaltet.
+- **Bereichswechsel nie automatisch.** KI pro Ordner sperrbar (voreingestellt gesperrt: Gesundheit, Familie). Die KI bekommt höchstens 6.000 Zeichen Text, nie die Datei. Ihr Begründungszitat muss wörtlich im Text stehen.
+- **Lernen aus Korrekturen** (Tabelle `corrections`, gelernte Regeln). „Rückgängig“ für automatische Ablagen.
+- **Automatische Titel** (`titles.make_title`); generische Titel werden ersetzt, eigene Titel nie.
+- **Datum nur aus dem erkannten Text** (`extract.date_analysis`), nie aus Upload-Datum, Dateiname oder Titel. `date_status` ist `sure` oder `unsure`, dazu bis zu 6 Kandidaten. Bei Unsicherheit erscheint die Rückfrage „Datum prüfen“ im Eingang.
+- **Inhaltliche Dubletten** (`duplicates.find`, nach Rechnungsnummer, Betrag/Datum und Textähnlichkeit). Im Eingang unter „Mögliche Duplikate“ mit den Optionen Überschreiben, Verwerfen oder Behalten.
 
-### 3.8 Betrieb
+### 3.3 Ausgaben Vermietung ✅
 
-| Funktion | Status |
+- **Sofortige Erfassung beim Upload** (`capture_on_upload`): als `entwurf`, solange das Objekt unklar ist; mit Ablage in Vermietung und bekanntem Objekt `bestaetigt`; bei Ablage in Privat wird die Ausgabe gelöscht. Erkennbar an `origin='auto'`.
+- **Zahlungsdatum = Rechnungsdatum** als Annahme (`paid_assumed=1`), solange kein Kontoumsatz oder Barzahlungshinweis vorliegt.
+- **„Aus Beleg auslesen“.** Keine Beträge raten: Die Auswahlliste `AmountPicker` erscheint, wenn der Endbetrag nicht eindeutig ist.
+- Rechnungs-Abfrage mit Objekt oder „keine Ausgabe“ (`no_expense`). „Rechnungen ohne Ausgabe“ zum Nacherfassen.
+- Bescheide werden nur mit Kategorie `grundsteuer` oder `grundbesitzabgaben` als **eine** Ausgabe mit Gesamtbetrag erfasst. Die Zerlegung erfolgt erst in der Betriebskosten-Belegprüfung, siehe 3.13.
+- Jahreszuordnung: `COALESCE(paid_on, invoice_date, doc_date)`. Prüfhinweise (u. a. anschaffungsnahe Aufwendungen innerhalb von 3 Jahren, nur Hinweis).
+- **Exporte** (`/api/export/expenses.{csv|xlsx|pdf}`): chronologisch mit durchgehender Belegnummer; PDF mit oder ohne Belege (`belege=0`). Gesamt-ZIP des Archivs.
+
+### 3.4 Mietkonto (Bank) ✅
+
+- **CSV-Import** (Commerzbank, gängige deutsche Formate). Duplikatschutz per `fingerprint`. `coverage()` zeigt den bereits erfassten Zeitraum und den empfohlenen Beginn des nächsten Exports.
+- **Folgeimporte:** Neue Umsätze in schon eingelesenen Zeiträumen werden erkannt und gemeldet.
+- **Abgleich:**
+  1. erfasste Rechnung gleichen Betrags (`expense_candidates`, Bonus für Rechnungsnummer und Aussteller)
+  2. **Mieter-Erkennung** (`_tenant_match`): Nachname eines Vertragspartners im Buchungstext; Sicherheit 0,95, wenn der Betrag der vereinbarten Monatsmiete entspricht, sonst 0,8
+  3. Verlauf je Zahlungspartner (Vorschläge schon ab der ersten gleichen Zuordnung; automatisch nur bei hoher Sicherheit)
+  4. KI (höchstens 40 je Import)
+  5. Stichwörter
+- **Zinsanteil aus dem Verwendungszweck** (`interest_share`): Beschriftete Zins- bzw. Tilgungsbeträge werden erkannt, nur der Zinsanteil wird als Teilbetrag vorgeschlagen. **Standardkategorie** ohne Erkennung: `sonstige` („Sonstige Werbungskosten“).
+- **Bestätigung:** automatische Zuordnungen stehen zur Kontrolle im Eingang (`confirm-auto`). Entscheidungen lassen sich jederzeit revidieren (`undo`).
+- **Umsatzübersicht** `#/umsaetze` mit Filter und Korrektur bereits bestätigter Umsätze.
+- Online-Banking direkt (FinTS/PSD2): ❌ nicht umgesetzt, der CSV-Import ersetzt es.
+
+### 3.5 Archiv, Suche, Dokument ✅
+
+- Archiv nach Bereich und Ordner, Filter für Objekt, Jahr, Tag und Favorit. Volltextsuche mit Hervorhebung.
+- **Suche:** Die Tastatur schließt nach Enter. Suchbegriff und Filter stehen in der Adresse, die Trefferliste kommt beim „Zurück“ sofort wieder, an derselben Scrollposition.
+- Dokumentansicht: Seitenbilder, Text, Felder, neu verarbeiten. **Öffnen** im PDF-Viewer und **Teilen** (Web Share API, einzelne Datei).
+- **Mehrfachauswahl (31.10.):** „Auswählen“ oder langes Drücken (500 ms) startet die Auswahl.
+  - Im Auswahlmodus wählt ein Antippen aus, statt das Dokument zu öffnen.
+  - Leiste: Anzahl, Alle/Keine, **ZIP**, **Teilen**. Teilen übergibt alle PDFs in einem Schritt an das Android-Menü. Bei zu langer Ladezeit kommt die Meldung „Jetzt teilen“ für einen zweiten Tipp.
+  - Höchstens 50 Dokumente. `GET /api/documents/bundle.zip?ids=…` liefert ein ZIP (Dateinamen wie beim Einzeldownload, doppelte nummeriert).
+  - Code: `pages/Archive.tsx`, `components/shareDocs.ts`.
+
+### 3.6 Objekte und Einheiten ✅
+
+Stammdaten, Einheiten mit Wohnfläche, Ausgaben nach Jahr, Dokumente je Objekt. **Einheiten-Vorgaben** per Tipp: EG, OG links, OG Mitte, OG rechts, Galerie. Einheiten werden in der Reihenfolge der Anlage sortiert. Einheiten mit Mietverhältnissen lassen sich nicht löschen. Die Objektseite zeigt die **Belegung** (`OccupancyPanel`).
+
+### 3.7 Mieterverwaltung ✅
+
+| Funktion | Verhalten |
 | --- | --- |
-| Dropbox-Import (CLI `plan`/`run`/`status`, fortsetzbar, Mapping-Datei) | ✅, durchgeführt (ca. 3.857 Dateien) |
-| Nächtliches Backup 3:30 Uhr (restic → B2, Aufbewahrung 14 Tage / 8 Wochen / 24 Monate) | ✅, läuft und ist verifiziert |
-| Ausfall-Mail über healthchecks.io (Start/Erfolg/Fehler mit Log) | ✅, eingerichtet |
-| Monatlicher Wiederherstellungstest (DB zurückholen und prüfen, Dateiliste abgleichen, rotierend 1/12 der Daten lesen) | ✅ im Code, erster Lauf mit neuer Version ausstehend (siehe 7 F) |
-| Verwaiste restic-Sperren vor jedem Backup entfernen | ✅ |
-| 2FA, Passwort ändern, Farbschema (System/Hell/Dunkel), Papierkorb | ✅ |
+| Mietverhältnisse | Mehrere Vertragspartner (`tenancy_parties`), **Konditionen ab Datum** (`tenancy_terms`: Kaltmiete, BK- und HK-Vorauszahlung, Personen, Notiz), Vertragsbeginn/-ende, tatsächlicher Ein- und Auszug, Umlagevereinbarungen, Notizen |
+| Prüfungen (`tenancy.py`) | Überschneidung in derselben Wohnung abgelehnt; Einheit Pflicht, wenn das Objekt Einheiten hat; mindestens ein Vertragspartner mit Nachname; erste Konditionen ab Mietbeginn; keine negativen Beträge; Daten plausibel |
+| Status | `kuenftig` / `aktiv` / `beendet` (nach Vertrags- bzw. Auszugsdatum) |
+| Mieterwechsel | „Beenden“ (Mietende, Auszug), danach direkt den Nachmieter anlegen. Lücken erscheinen automatisch als **Leerstand**. Vor- und Nachmieter samt Leerstand sind auf der Mieterseite verlinkt. |
+| Mieterliste `#/mieter` | Filter Aktiv/Künftig/Beendet/Alle, Suche. Je Karte die **Gesamtmiete fett, dazu Kalt/BK/HK**. **Monatssumme aller angezeigten laufenden Mietverhältnisse unterhalb der Liste**; beendete und künftige zählen nicht mit. Hinweis bei offener oder nicht erfasster Kaution (`DepositPill`). |
+| Mieterseite `#/mieter/{id}` | Laufzeit, Konditionen, Vertragspartner, Bereiche **Kaution**, **Mahnungen**, **Abmahnungen**, **Unterlagen** (Dokumente mit `tenancy_id`, Upload mehrerer Dateien), Bearbeiten, Beenden, „Versehentlich angelegt? Löschen“ |
+| Formular | Fehler direkt im Formular (`form-error`), Wohnung auch beim Bearbeiten wählbar, mehrere Dateien anhängbar (Upload beim Speichern) |
+| **Übernahme aus Vertrag/Screenshot** | `POST /api/tenancies/extract` liest PDF-Text bzw. OCR (`tenancy_extract.parse`) und füllt nur leere Felder vor, mit Fundstellen und Liste fehlender Angaben. Kein Raten: Bei mehrdeutiger Wohnung wird keine gewählt; der Vermieter wird nicht als Mieter übernommen; eine Gesamtmiete gilt nicht als Kaltmiete. **KI nur auf ausdrücklichen Wunsch** (`use_ai`) und nur mit Schlüssel. Gespeichert wird erst mit „Mietverhältnis anlegen“. |
+| Selbst eintragen mit Ansicht | Für handschriftliche Verträge: `POST /api/tenancies/preview` liefert Seitenbilder, `DocViewer` zeigt sie beim Ausfüllen (höchstens 30vh, Zoom) |
+
+### 3.8 Einnahmen `#/einnahmen` ✅
+
+- **Soll** je Monat aus den Konditionen, bei Beginn oder Ende im Monat taggenau anteilig (`income.monthly_soll`).
+- **Ist** aus dem Mietkonto (`transactions.tenancy_id`) und Barzahlungen (`rent_receipts`). **Eingänge ab dem 25. zählen für den Folgemonat** (`EARLY_DAY = 25`).
+- **Automatisch als eingegangen** (Einstellung `rent_assume_paid`, Standard an): Fällige Monate ohne Buchung gelten ab dem Monatsersten als bezahlt (Status „angenommen“). Echte Zahlungen haben Vorrang. „**Ausgeblieben?**“ je Monat hinterlegt eine Ausnahme (`rent_exceptions`: tatsächlich gezahlt, Notiz), „aufheben“ entfernt sie. Fehlt bei einem sonst überweisenden Mieter ein Eingang, obwohl die Kontoumsätze den Zeitraum abdecken, wird der Monat markiert (`bank_missing`).
+- **Monatsstatus:** frei / kuenftig / angenommen / bezahlt / teilweise / offen. Der Saldo läuft innerhalb des Jahres auf. Kennzahlen: Soll, Soll bis heute, Eingegangen, Rückstände, Überzahlungen, davon angenommen.
+- **Diagramme:**
+  - Säulen „Eingänge je Monat“ (mit Zahlung bzw. angenommen, Soll als gestrichelte Linie)
+  - Balken „Zusammensetzung“ (Kaltmiete, BK-VZ, HK-VZ, Mehrbeträge)
+  - Balken je Mietverhältnis und Objekt
+- **Aufteilung des Ist** (`income.split_parts`): anteilig nach Soll in Kalt/BK/HK, centgenau (größter Rest), Überschuss als „Mehrbetrag“.
+- **Einnahmenübersicht als PDF für das Finanzamt** (`GET /api/export/income.pdf?year=&property_id=`, `income_pdf.py`):
+  - Zusammenfassung, je Objekt die Mietverhältnisse und eine Monatsübersicht
+  - Eingänge ohne Zahlungsnachweis (nur angenommen) und Rückstände **getrennt ausgewiesen**
+  - weitere Einnahmen ohne Mietverhältnis
+  - Erläuterungen „keine steuerliche Berechnung, ersetzt nicht die Anlage V“
+- Monatszeilen zeigen, wann ein Monat angemahnt wurde. Link „Rückstand anmahnen“ führt zur Mieterseite.
+
+### 3.9 Mahnwesen (Miete) ✅ (`dunning.py`, `pages/Dunning.tsx`)
+
+- **Offene Monate nur aus den Einnahmen.** Überzahlungen werden auf die ältesten Rückstände angerechnet (§ 366 Abs. 2 BGB).
+- **Rechnerischer Hinweis** auf die Schwellen des § 543 Abs. 2 S. 1 Nr. 3 BGB (zwei aufeinanderfolgende Monate mit zusammen mehr als einer Monatsmiete offen, oder Rückstand von mindestens zwei Monatsmieten). Keine rechtliche Bewertung.
+- **Zahlungserinnerung oder Mahnung** als PDF:
+  - Inhalt: Briefkopf aus den Vermieterangaben, Tabelle der offenen Monate, Frist (Vorschlag +14 Tage), Bankverbindung, Verwendungszweck. Die Mahnung verweist auf frühere Schreiben und auf § 556b BGB.
+  - Anpassbar: Anrede und ein Zusatztext. Die Beträge sind nicht änderbar.
+  - Keine Verzugszinsen oder Mahngebühren.
+  - Vorschau ohne Speichern.
+- Ablage beim Mieter, Liste versandter Schreiben mit PDF. Löschen mit Rückfrage entfernt nur den Listeneintrag, das PDF bleibt im Archiv.
+
+### 3.10 Abmahnungen ✅ (`abmahnung.py`, `pages/Abmahnung.tsx`)
+
+- **Anlässe mit Textbausteinen:** unpünktliche Zahlung, Ruhestörung, unerlaubte Überlassung an Dritte, Tierhaltung ohne Erlaubnis, Verstoß gegen die Hausordnung, Sonstiges. Aufforderung und Folgenhinweis sind editierbar, `{frist}` wird durch das Fristdatum ersetzt (Pflichtfrist bei Überlassung und Tierhaltung).
+- **Ohne konkreten Vorfall mit Datum kein Schreiben.** Vorfälle nach dem Briefdatum werden abgelehnt.
+- **Zustellweg:** Einwurf-Einschreiben, Bote, persönlich, Brief, E-Mail. Die ersten drei stehen als Vermerk auf dem Schreiben.
+- **Vorschläge verspäteter Zahlungen** aus tatsächlichen Eingängen der letzten 24 Monate:
+  - fällig am 3. Werktag; Samstag zählt nicht (BGH VIII ZR 129/09); RLP-Feiertage berücksichtigt
+  - erst mehr als 2 Werktage nach Fälligkeit wird vorgeschlagen, weil die Überweisungslaufzeit zählt (BGH VIII ZR 222/15)
+- Ablage beim Mieter, Liste, Löschen mit Rückfrage.
+
+### 3.11 Mietkaution ✅ (`deposit.py`, `deposit_letter.py`, `pages/Deposit.tsx`)
+
+- **Arten:** `bar` (Barkaution/Kautionskonto), `sparbuch` (verpfändet), `buergschaft` (Bankbürgschaft), `versicherung` (Kautionsversicherung), `keine`.
+- **Höhe:**
+  - per Tipp **2 oder 3 Kaltmieten zu Mietbeginn** oder ein eigener Betrag
+  - über 3 Nettokaltmieten gibt es einen Hinweis (§ 551 Abs. 1 BGB), gespeichert wird trotzdem
+- **Barkaution:**
+  - Einzahlungen erfassen und löschen (mit Rückfrage), Fortschrittsbalken
+  - optional **3 Raten** (§ 551 Abs. 2 BGB): Mietbeginn, dann der 3. Werktag der beiden Folgemonate; überfällige Raten sind markiert
+- **Urkunden-Arten:** Status nach Eingang der Urkunde (Datum). Fehlt die Urkunde nach Mietbeginn, ist das „offen“.
+- **Rückgabe:** Datum, ausgezahlt, einbehalten. Status „zurückgegeben“ bzw. „abgerechnet“.
+- **Zahlungserinnerung/Mahnung zur Kaution:**
+  - Barkaution: die zum Briefdatum fälligen, offenen Raten
+  - Urkunden-Arten: Aufforderung, das Original vorzulegen
+  - Rechnerischer Hinweis auf § 569 Abs. 2a BGB (offen ≥ 2 Nettokaltmieten)
+  - Ablage beim Mieter
+- **Einschränkung:** Eine Kautionsüberweisung auf das Mietkonto zählt als Miete, wenn sie im Kontoumsatz dem Mieter zugeordnet wird. Eine Zuordnung „Kaution“ für Umsätze gibt es nicht (💡 angeboten, siehe 7 E).
+
+### 3.12 Betriebskostenabrechnung ✅ (Details in `docs/BETRIEBSKOSTEN.md`)
+
+- **Assistent** `#/betriebskosten/{id}` mit 8 Schritten: Kosten, Schlüssel, Werte, Nutzungszeiten, Vorauszahlungen, Ergebnis, Prüfung, Freigabe.
+- **Übersicht** je Objekt und Jahr, Vermieterangaben (Name, Anschrift, Telefon, E-Mail, IBAN, Bank, Ort, Logo).
+- **Kostenarten** nach § 2 BetrKV plus „nicht umlagefähig“.
+- **Schlüssel:** Fläche, Einheiten, Personentage, Verbrauch, direkt, extern (Ablesefirma), individuell.
+- **Rechnung:**
+  - Tage kalendergenau
+  - Leerstand als Vermieteranteil (BGH VIII ZR 159/05)
+  - Heizkosten aus der Abrechnung der Ablesefirma
+  - exakte Brüche, Rundung nach dem größten Rest
+- **Prüfstufen:** kritisch, Warnung (einzeln zu bestätigen), Hinweis.
+- **Fassungen:** freigegebene Fassungen als Snapshot; jede spätere Änderung setzt den Zeitraum auf „Entwurf“ zurück.
+- **PDF:** nach BGH VIII ZR 244/18; Ablage im Archiv je Mieter; Belege als ZIP zur Belegeinsicht.
+- **Kosten übernehmen:** aus Ausgaben (Abflussprinzip, Kostenart wird vorgeschlagen) oder manuell.
+- **Wischen zum Löschen mit Bestätigungsdialog** (`SwipeRow`, `ConfirmDelete`):
+  - für Kostenpositionen und Entwurfs-Abrechnungen in der Übersicht
+  - freigegebene Abrechnungen sind nicht löschbar
+  - der Papierkorb an Kostenpositionen fragt ebenfalls nach
+
+### 3.13 Belegprüfung und Belegsuche (Betriebskosten) ✅ (`bk_receipts.py`)
+
+- **„Belege prüfen“:** sucht Archivbelege des Objekts (Bereich Vermietung, abgelegt, ohne `tenancy_id`, keine Betriebskostenabrechnungen), die zum Zeitraum gehören. Relevant ist ein Beleg, wenn sein Datum im Zeitraum liegt, der Bescheid das Jahr nennt oder ein Dauerbescheid „für Folgejahre“ gilt.
+- **Abgabenbescheide zeilenweise zerlegt** (`parse_bescheid`):
+  - Kostenart je Zeile über `TYPE_PATTERNS`: Grundsteuer, Entwässerung, Straßenreinigung, Müll, Wasser, Schornstein, Versicherung; wiederkehrende Beiträge und Ausbaubeiträge werden „nicht umlagefähig“.
+  - übergangen werden Fälligkeiten, Rückstände, Erstattungen, Zinsen, IBAN usw.
+  - Betrag: hinter dem letzten „=“, sonst der letzte Betrag der Zeile; vier gleiche Beträge gelten als Vierteljahresraten und werden summiert (mit Prüfhinweis); ein Betrag in der Folgezeile wird erkannt.
+  - „passt zur Summe“ nur, wenn alle Positionen zusammen den Gesamtbetrag des Bescheids ergeben.
+- **Rechnungen ohne Ausgabe** erscheinen als Vorschlag. Rechnungen mit Ausgabe laufen über „Aus Ausgaben übernehmen“ oder die Suche.
+- **Stichwortsuche** (Suchfeld direkt im Schritt „Kosten“):
+  - fest auf Objekt und Belegdatum im Abrechnungszeitraum begrenzt (`search.search(date_from, date_to)`)
+  - **Begriffserweiterung** (`SYNONYMS`, Zerlegung von „…bescheid/…rechnung/…gebühr…“), z. B. findet „Abgabenbescheid“ auch „Bescheid über Grundbesitzabgaben“
+  - Treffer zeigen Positionen und **alle Beträge des erkannten Texts** (`amount_lines`) mit Kennzeichnung von Summen- und Fälligkeitszeilen
+- **Übernahme:**
+  - „+ Betrag speichern“ und „… Positionen speichern“ legen die Positionen **sofort dauerhaft** an: Herkunft `beleg`, `document_id`, Fundstelle (`evidence`), `verified_at = NULL`.
+  - Teilweise übernommene Belege bleiben sichtbar, gespeicherte Positionen sind markiert, dieselbe Fundstelle wird nicht doppelt angelegt.
+  - Noch nicht gespeicherte Auswahl und geänderte Beträge bleiben auf dem Gerät erhalten (localStorage).
+- **Manuelle Prüfung:**
+  - Jede automatisch erfasste Position (Herkunft `beleg`, oder `ausgabe` ohne Nutzerprüfung) ist „ungeprüft“, bis „geprüft“ angetippt wird; eine Änderung von Betrag oder Kostenart gilt als geprüft.
+  - Die Prüfung meldet ungeprüfte Positionen als Warnung und Positionen ohne Beleg als Hinweis.
+  - Doppelerfassung (Gesamtbetrag und Zerlegung desselben Belegs) wird gemeldet. Zerlegte Belege erscheinen nicht mehr unter „Aus Ausgaben übernehmen“; Belege mit Gesamtbetrag sind für die Zerlegung gesperrt.
+- **Navigation:**
+  - Belege öffnen im selben Fenster.
+  - Schritt, geöffnete Belegprüfung und Suchbegriff stehen in der Adresse; „Zurück“ führt an dieselbe Stelle, mit wiederhergestellter Scrollposition.
+
+### 3.14 Betrieb ✅
+
+- **Dropbox-Import:** CLI `plan`/`run`/`status`, durchgeführt.
+- **Backup:** nächtlich 3:30 Uhr, restic nach B2, Aufbewahrung 14 Tage / 8 Wochen / 24 Monate, `restic unlock` vorab, healthchecks.io-Ping (Start/Erfolg/Fehler).
+- **Wiederherstellungstest:** monatlich (`0 5 1 * *`), rotierend 1/12 der Daten, ohne Vollkopie. 🟡 Der erste erfolgreiche Serverlauf der neuen Fassung ist ❓.
+- **Konto und Darstellung:** 2FA, Passwort ändern, Farbschema, Papierkorb, Gesamtexport.
 
 ---
 
@@ -223,236 +335,260 @@ Status-Legende: ✅ implementiert (Code vorhanden, getestet, gepusht) · 🟡 te
 
 ### 4.1 Gestaltung (implementiert)
 
-- **Farben** (CSS-Variablen in `styles.css`): Grundton Petrol `--petrol #0d5c66` (stark `#0a4a52`, weich `#d8e8e8`), Papier `--paper #eef1f0`, Fläche `#ffffff`, Text `--ink #15202a`, Linien `#d3dbd8`. **Bereichsfarben:** Privat Blau `--privat #3b5a8f`, Vermietung Grün `--vermietung #4a7a33`. Hinweis Ocker `--ochre #a8760f`, Fehler `--danger #b0402c`, OK `--ok #2f7a55`. Dunkelmodus vorhanden.
-- **Typografie:** Systemschriften (Segoe UI Variable / Roboto / system-ui), Überschriften in eigener Display-Variante.
-- **Radien** 6/10/16 px, dezente Schatten, Navigationshöhe 64 px.
-- **Sprache der Oberfläche:** Deutsch, Anrede mit „Sie“.
-- **Logo:** `brand-mark` aus drei Streifen. Manifest: Name „SmartArchive“, Kurzname „Archiv“, Themenfarbe `#0d5c66`.
+- **Farben** (CSS-Variablen):
+  - Petrol `--petrol #0d5c66`, Papier `#eef1f0`/`--paper`, Text `--ink #15202a`
+  - Bereichsfarben: Privat `--privat #3b5a8f`, Vermietung `--vermietung #4a7a33`
+  - Ocker `--ochre #a8760f`, Fehler `--danger #b0402c`, OK `--ok #2f7a55`
+  - Dunkelmodus über `prefers-color-scheme` bzw. `data-theme`
+- **Typografie und Formen:** Systemschriften, Radien 6/10/16 px, dezente Schatten, Navigationshöhe `--nav-h` (64 px).
+- **Sprache:** Deutsch, Sie-Form, Beträge im deutschen Format.
+- **Status-Pills:** `bestaetigt` (grün), `entwurf` (ocker), `ungeklaert` (rot).
+- **Hinweise:** `.notice.warn`, `.notice.block` für Fließtext.
 
 ### 4.2 Navigation
 
-- **Mobil:** Kopfzeile mit Logo, Suche und Einstellungen. Untere Navigation mit Start, Eingang (Zähler-Badge), Archiv, Objekte, Ausgaben, dazu der mittige Kamera-Knopf (FAB) „Beleg erfassen“.
-- **Desktop:** Seitenleiste mit denselben Punkten.
-- **Routen:** `#/` Start, `#/eingang`, `#/archiv` (`?bereich=`, `?objekt=`), `#/suche`, `#/objekte`, `#/objekt/{id}`, `#/ausgaben` (`?objekt=`), `#/dokument/{id}`, `#/einstellungen`, `#/teilen`.
+- **Mobil:** Kopfzeile (Logo, Suche, Einstellungen); untere Navigation Eingang, Archiv, Kamera-FAB, Objekte, Ausgaben; Desktop mit Seitenleiste.
+- **Vermietung:** Registerleiste **Objekte | Mieter | Einnahmen | Betriebskosten** (`.register.small`, horizontal scrollbar, damit die Seite nicht breiter als der Bildschirm wird).
 
-### 4.3 Screens
+### 4.3 Wiederverwendbare Komponenten und Muster
 
-| Screen | Inhalt |
-| --- | --- |
-| Login | Einrichtung (Setup-Code, Benutzer, Passwort), Anmeldung mit optionalem TOTP |
-| Start | Zuletzt hinzugefügt, Ausgaben Vermietung des laufenden Jahres |
-| **Eingang** | Gruppen in dieser Reihenfolge: Nacharbeit (Fehler), Wird verarbeitet, Bitte ablegen, **Mögliche Duplikate**, **Datum prüfen**, **Umsätze klären**, Umsätze automatisch zugeordnet, Automatisch abgelegt |
-| Archiv/Suche | Liste mit Filtern, Treffer hervorgehoben |
-| Dokument | Vorschau, „Öffnen“/„Teilen“, Angaben bzw. Ablage (im Eingang), Ausgaben mit „Aus Beleg auslesen“ |
-| Objekte / Objekt | Liste; Stammdaten, Einheiten, Ausgaben nach Jahr, Dokumente |
-| **Ausgaben** | Jahr wählen, Zu prüfen (Hinweise), Ohne Datum, Export (CSV, Excel, PDF mit und ohne Belege), Summen je Objekt, Ohne Zahlungsdatum, Mietkonto (CSV-Import, `BankPanel`), Rechnungen ohne Ausgabe |
-| Einstellungen | Automatische Ablage und KI, Ordner (KI-Chip je Ordner), Regeln (auch „Aus Ihren Korrekturen“), Konto und Sicherheit (2FA, Passwort), Darstellung, Daten (Gesamtexport, Papierkorb) |
+- **Grundbausteine:**
+  - `Sheet` (Dialog), `Icon`, `Empty`, `ErrorBox`, `Loading`, `BackButton` (Ziel ist `history.back()`, sonst der übergebene Rückweg), `DocRow`
+  - `SwipeRow` (Wischen nach links: kurz legt „Löschen“ frei, weit öffnet die Rückfrage) und `ConfirmDelete` (Abbrechen vorausgewählt)
+  - `openPdf()` in `Dunning.tsx`: PDF-Vorschau per POST in einem vorab geöffneten Fenster
+- **Fachliche Karten:** `FileCollector` (mehrere Dateien), `DocViewer`, `AmountPicker`, `TxCard`, `InvoiceCard`, `DateQuestion`, `DuplicateCard`, `Scanner`, `UploadSheet`.
+- **Diagramme:** reines CSS (`.month-chart`, `.cat-bars`), keine Bibliothek.
 
-### 4.4 Wiederverwendbare Komponenten
+### 4.4 Designideen (nicht umgesetzt)
 
-`ui.tsx` (Sheet/Dialog, Icon, Empty, Dokumentkarte mit Highlight, Toasts), `UploadSheet`, `Scanner`, `Suggestion`, `InvoiceCard`, `DateQuestion`, `DuplicateCard`, `AmountPicker`, `TxCard`.
-Bekannte Besonderheit: Bei verschachtelten Dialogen wird `stopPropagation` benötigt, damit das Schließen eines inneren Dialogs nicht das UploadSheet schließt (behoben).
-
-### 4.5 Designideen (nicht umgesetzt)
-
-- **App-Icon:** Empfohlen wurde **Option A „Register“**. Die Umsetzung ist angeboten, **aber nicht beauftragt und nicht umgesetzt** (💡). Derzeit sind `icon.svg`, `icon-192.png`, `icon-512.png` und `icon-maskable-512.png` (MVP-Icon) in `frontend/public` vorhanden und im Manifest eingetragen. Für Option A müssten diese Dateien ersetzt werden.
+- App-Icon Option A „Register“: 💡 empfohlen, nicht beauftragt.
 
 ---
 
 ## 5. Datenstrukturen und Geschäftslogik
 
-### 5.1 Datenmodell (SQLite, `PRAGMA user_version` = 8)
+### 5.1 Migrationen (`db.MIGRATIONS`, `PRAGMA user_version` = 18)
 
-| Tabelle | Zweck / wichtige Felder |
+| Nr. | Inhalt |
 | --- | --- |
-| `users`, `sessions`, `settings` | Konto, Sitzungen (Token-Hash), Schlüssel-Wert-Einstellungen (JSON) |
-| `areas` | `privat`, `vermietung` (+ `ai_enabled`) |
-| `categories` | Ordnerbaum je Bereich (`parent_id`), `keywords`, `ai_enabled`, `sort` |
-| `correspondents` | Absender (+ `aliases`) |
-| `properties`, `units` | Mietobjekte (Adresse, Art, Fläche, Anteil, Status, Kaufdatum, Anschaffungskosten, Stichwörter, archiviert) und Einheiten |
-| `documents` | Bereich, Ordner, Absender, Objekt/Einheit, `title`, `doc_type`, `doc_date`, `upload_area`, `status` (processing/inbox/filed/error), `filed_by` (user/rule/history/ai/keyword), `confirmed`, `confidence`, `favorite`, `text_source`, `deleted_at`; ab Migr. 2: `source_path`, `preset`; 5: `no_expense`; 7: `date_status`, `date_candidates`; 8: `duplicate_of`, `duplicate_reason` |
-| `files` | Rollen: `original`, `capture`, `pdf`, `searchable`, `thumb`, `replaced`; `sha256`, `mime`, `path` |
-| `document_text`, `docs_fts` | Volltext und Seiten, FTS5-Index (title, content, meta) |
-| `tags`, `document_tags` | Schlagwörter |
-| `suggestions` | Vorschläge je Dokument (source, payload JSON, confidence, reason, evidence, status) |
-| `expenses` | `document_id`, `property_id`, `unit_id`, `invoice_date`, `paid_on`, `amount_cents`, `payee`, `category_key`, `note`, `status` (entwurf/bestaetigt/ungeklaert); 3: `origin` (user/auto/bank); 6: `paid_assumed` |
-| `rules`, `corrections` | Ablageregeln (text/correspondent/filename) und gelernte Korrekturen |
-| `jobs` | Aufträge (`process`, `reclassify`), Status, Versuche, `priority` |
-| `audit_log` | Protokoll aller Änderungen |
-| `import_items` | Importstand je Quelldatei |
-| `bank_accounts`, `bank_imports`, `transactions` | Mietkonto, Importe, Umsätze (Betrag negativ = Ausgabe, `party_key`, `status` open/auto/done, `kind`, Verknüpfung zu Ausgabe/Dokument, `suggestion` JSON) |
+| 1–8 | Grundschema (Dokumente, Dateien, Ordner, Absender, Objekte/Einheiten, Ausgaben, Regeln, Jobs, Audit, Volltext), Import-Herkunft, `expenses.origin`, Kontoumsätze, `no_expense`, `paid_assumed`, `date_status`/`date_candidates`, `duplicate_of`/`duplicate_reason` |
+| 9 | `tenancies`, `tenancy_parties`, `tenancy_terms` |
+| 10 | `bk_periods`, `bk_costs`, `bk_keys`, `bk_values`, `bk_advances`, `bk_statements` |
+| 11 | `documents.tenancy_id` |
+| 12 | `transactions.tenancy_id`, `rent_receipts` (Barzahlungen) |
+| 13 | `rent_exceptions` (tenancy_id, month `YYYY-MM`, paid_cents, note; eindeutig je Monat) |
+| 14 | `dunning_letters` (kind erinnerung/mahnung, letter_date, due_date, months JSON, total_cents, snapshot, document_id) |
+| 15 | `warning_letters` (reason, letter_date, deadline, incidents JSON, delivery, snapshot, document_id) |
+| 16 | `deposits` (je Mietverhältnis: kind, months, amount_cents, installments, account, provider, reference, document_received_on, returned_on, returned_cents, retained_cents, note) und `deposit_payments` |
+| 17 | `deposit_letters` (kind, letter_date, due_date, total_cents, snapshot, document_id) |
+| 18 | `bk_costs.evidence`, `bk_costs.verified_at`; Bestand: manuelle und von Hand geprüfte Ausgaben-Positionen gelten als geprüft |
 
-**Beträge** werden immer in Cent (Integer) gespeichert. **Datumsangaben** als ISO-String `YYYY-MM-DD`, Zeitstempel als UTC-ISO.
+**Konventionen:** Beträge in **Cent (Integer)**. Daten als ISO `YYYY-MM-DD`, Zeitstempel UTC-ISO. Monate als `YYYY-MM`.
 
-### 5.2 Ausgabenkategorien (Anlage-V-Gruppen, `seed.EXPENSE_CATEGORIES`)
+### 5.2 Einstellungen (`settings`)
 
-`schuldzinsen`, `geldbeschaffung`, `erhaltung_sofort`, `erhaltung_verteilt` (§ 82b EStDV), `grundsteuer`, `grundbesitzabgaben`, `heizung`, `versicherung`, `hausnebenkosten`, `verwaltung`, `hausgeld_laufend`, `fahrtkosten`, `sonstige`, `nicht_sofort` (`deductible=False`, wird im Export getrennt ausgewiesen).
+`auto_file`, `auto_threshold` 0,9, `suggest_threshold` 0,5, `ai_enabled`, `rent_assume_paid` (Standard true), `landlord` (Vermieterangaben inkl. Logo-Pfad). Einmal-Marker: `expense_autofill_v1`, `expense_dates_v2`, `paid_assumed_v1`, `date_status_v1`, `bank_suggest_v2`.
 
-### 5.3 Standard-Ordner (`seed.DEFAULT_TREE`)
+### 5.3 Wichtige Regeln und Formeln
 
-- **Privat:** Finanzen und Banken (Kontoauszüge, Depot), Versicherungen, Verträge (Strom und Gas, Telefon und Internet), Steuern, Fahrzeuge, Gesundheit (KI aus), Familie (KI aus), Arbeit, Sonstiges.
-- **Vermietung:** Rechnungen und Belege, Versicherungen, Grundbesitzabgaben, Hausgeld und WEG, Nebenkosten, Finanzierung, Mietverträge und Mieter, Kauf und Objektunterlagen, Sonstiges.
+- **Mietzeitraum:** `tenancy.span(t)` = Beginn bis Ende, wobei Auszug/Vertragsende maßgeblich sind. `term_at(terms, day)` liefert die am Tag gültigen Konditionen.
+- **Monats-Soll:** Summe über die Tage des Monats von Kondition/Monatstage, gerundet je Bestandteil.
+- **Zahlungsmonat:** Datum ≥ 25. → Folgemonat.
+- **Offene Monate (Mahnwesen):** Monate mit Soll > Ist; Überzahlungen werden auf die älteste Schuld angerechnet.
+- **Monatsmiete für Schwellen:** Kalt + BK + HK der am Stichtag gültigen Konditionen. Für die Kaution gilt dagegen die **Nettokaltmiete zu Mietbeginn**.
+- **Werktage** (`abmahnung.third_workday`, `add_workdays`): Montag bis Freitag ohne Feiertage in RLP (Neujahr, Karfreitag, Ostermontag, 1.5., Himmelfahrt, Pfingstmontag, Fronleichnam, 3.10., 1.11., 25./26.12.).
+- **Betriebskosten:** siehe `docs/BETRIEBSKOSTEN.md` (Brüche, größter Rest, Leerstand, Heizkosten extern, Prüfkatalog, Fassungen).
 
-### 5.4 Einstellungen (Standard)
+### 5.4 Grundsätze in allen Vermietungsmodulen
 
-`auto_file=true`, `auto_threshold=0.9`, `suggest_threshold=0.5`, `ai_enabled=true` (wirkt nur mit Schlüssel). Einmal-Marker für Datenkorrekturen beim Start: `expense_autofill_v1`, `expense_dates_v2`, `paid_assumed_v1`, `date_status_v1` (in `main.py`: `_autofill_expenses`, `_fix_dates`, `_assume_paid`, `_assess_dates`).
-
-### 5.5 Datumserkennung (`extract.date_analysis`)
-
-- Formate: `TT.MM.JJJJ` (auch mit `/`, `-`, `,`, zweistellige Jahre), ISO, „12. März 2026“. OCR-Korrektur (`O→0`, `I/l/|→1`) mit `_ocr_fix`.
-- Priorität: Beschriftung „Rechnungsdatum“ > „Datum“/„vom“ > „Leistungsdatum“, auch in der Zeile davor, sonst das erste Datum im Kopfbereich.
-- Gemieden werden Daten nach „bis, fällig, zahlbar, gültig, geb., ab, zum, spätestens, Frist“.
-- **Sicher**, wenn nur ein Datum vorkommt oder ein eindeutig beschriftetes Datum ohne gleichrangige Konkurrenz. Sonst `unsure`, dann Rückfrage.
-- `date_from_name` (Dateiname) und `largest_amount` existieren noch im Code, werden aber **bewusst nicht mehr verwendet**.
-
-### 5.6 Dublettenerkennung (`duplicates.find`)
-
-Verglichen wird nur mit nicht gelöschten, fertig verarbeiteten Dokumenten. Es braucht mindestens 30 Zeichen Text. Die drei Regeln mit Rangfolge:
-1. Gleiche **Rechnungsnummer** (mindestens 4 Zeichen nach Normalisierung) und dazu gleicher Betrag oder mindestens 35 % Textähnlichkeit (Score 3+sim).
-2. Gleicher **Endbetrag und gleiches Datum** (auch über `expenses.invoice_date`) und mindestens 30 % Textähnlichkeit (2+sim).
-3. Bei gleichem Datum und mindestens 80 % Textähnlichkeit, nur wenn 1 und 2 nichts finden (1+sim).
-
-Die Ähnlichkeit ist ein Jaccard-Wert über Wort-3-Gramme (je höchstens 6.000 Zeichen). Byte-gleiche Dateien fängt schon der Upload ab (`documents.find_duplicate`).
-
-### 5.7 Ausgaben-Automatik (Regeln)
-
-- Als Rechnung gelten die Dokumenttypen `Rechnung`, `Kassenbon`, `Quittung`, dazu `Bescheid` nur bei Grundsteuer oder Grundbesitzabgaben.
-- `capture_on_upload`: nicht bei Privat, nicht bei `no_expense`, nur wenn noch keine Ausgabe am Dokument hängt und Bereich oder Objekt auf Vermietung deuten. Status `entwurf`, `origin='auto'`.
-- `ensure_expense` (bei Ablage): Vermietung und Objekt bekannt, dann wird ein Entwurf zu `bestaetigt` befördert oder eine neue Ausgabe angelegt. Bei Ablage in Privat oder `no_expense` werden die `auto`-Ausgaben gelöscht.
-- Zahlungsdatum: aus dem Beleg, sonst Rechnungsdatum mit `paid_assumed=1`. Ein Kontoumsatz setzt das Buchungsdatum mit `paid_assumed=0`. Beim Rückgängigmachen wird der vorige Wert wiederhergestellt.
-- **Grundsatz:** Kein Betrag wird geraten. Ohne eindeutig beschrifteten Endbetrag folgt die Auswahlliste.
-
-### 5.8 Validierung und Fehlerbehandlung
-
-- Upload-Größe höchstens `MAX_UPLOAD_MB`. MIME-Typ per Sniffing.
-- Worker: fehlgeschlagene Jobs werden wiederholt (`attempts`), hängende Jobs zurückgesetzt (`recover_stale`). Dokumente mit Fehler stehen im Eingang unter „Nacharbeit“.
-- Transaktionen mit `BEGIN IMMEDIATE` (`db.tx`), Fremdschlüssel aktiv.
+Keine geschätzten Beträge. Kein automatisches Übernehmen ohne Bestätigung, wo es fachlich darauf ankommt (Vorauszahlungen, Belegpositionen gelten bis zur Prüfung als ungeprüft). Rechtliche Schwellen nur **rechnerisch** anzeigen, nie bewerten. Schreiben mit Snapshot und Archivablage.
 
 ---
 
-## 6. Entwicklungshistorie (Kurzfassung, chronologisch)
+## 6. Entwicklungshistorie (chronologisch, Kurzfassung)
 
-1. **MVP:** Archiv mit zwei Bereichen, OCR, Suche, automatische Ablage, Objekte, Ausgaben, Exporte, Login mit 2FA, PWA, Docker und Tailscale auf netcup.
-2. **Dropbox-Import** mit Ordner-Mapping, Office-Dateien, Auftragspriorität. Durchgeführt, danach rund 1.146 OCR-Jobs abgearbeitet.
-3. **Rechnungs-Abfrage** mit Objektzuordnung, Ausgabe-Entwürfe, PDF öffnen und teilen.
-4. **Mietkonto:** CSV-Import der Commerzbank mit Abgleich und Rückfrage. Statt Direktanbindung ans Online-Banking.
-5. **Scanner** (Kanten, Zuschnitt, Entzerrung). Fehler: Updates kamen auf dem Handy nicht an. **Lösung:** Dateinamen mit Prüfsumme und Service Worker v2. Das muss so bleiben.
-6. **Automatische Titel.**
-7. **Nacherfassung** von Rechnungen ohne Ausgabe. Danach **automatische Erfassung, die sofort zählt** (Entscheidung des Nutzers).
-8. **Fehler:** Belege ohne Datum landeten im Upload-Jahr. **Upload-Datum als Fallback entfernt.** Danach auf Wunsch auch der **Dateiname als Datumsquelle entfernt**. Ersatz ist die Rückfrage.
-9. **Exporte** chronologisch mit Monat, Jahr und durchgehender Belegnummer.
-10. **Zahlungsdatum = Rechnungsdatum** als Annahme, gekennzeichnet und korrigierbar.
-11. **PDF ohne Belege**, überlappungsfrei. Belegstempel in einen eigenen Rand verschoben.
-12. **Betrag sofort beim Upload** erfassen, Knopf **„Aus Beleg auslesen“**.
-13. **Höchstbetrag-Raten verworfen**, weil es Beispielbeträge erwischte. Ersatz ist die **Auswahlliste**.
-14. **Upload direkt zum Mietobjekt**, Datum mit Sicherheitsstufe und Bestätigung.
-15. **Inhaltliche Duplikatprüfung** mit Überschreiben, Verwerfen oder Behalten.
-16. **Backup:** zuerst Hetzner Storage Box geplant, **ersetzt durch Backblaze B2 (kostenlos, 10 GB)**. B2-Anmeldung scheiterte zuerst mit 401 (keyID und Schlüssel passten nicht zusammen), gelöst mit einem neuen Application Key. Erste Sicherung am 28.10.2026, die Nachtsicherung lief am 29.10. erfolgreich.
-17. **healthchecks.io-Benachrichtigung**. Der Wiederherstellungstest wurde umgebaut, weil `/tmp` auf Debian 13 im RAM liegt und die Vollkopie daran scheiterte. **Verwaiste Sperren** werden vor dem Backup entfernt.
-
-**Verworfen bzw. ersetzt:** Upload-Datum als Datumsquelle, Dateiname als Datumsquelle, automatisches Übernehmen des größten Betrags, Hetzner Storage Box als Backup-Ziel, Vollwiederherstellung nach `/tmp` im Test, Online-Banking-Direktanbindung (nicht umgesetzt, CSV stattdessen).
+1. **Bis 29.10.:**
+   - MVP (Archiv, OCR, Suche, Ablage, Ausgaben, Exporte, 2FA, PWA, Docker/Tailscale)
+   - Dropbox-Import, Scanner, automatische Titel, Rechnungsautomatik (zählt sofort)
+   - Datum nur aus dem Text, Zahlungsdatum angenommen, Betrags-Auswahlliste, Dubletten
+   - Backup B2 mit healthchecks.io
+   - **Verworfen:** Upload-Datum und Dateiname als Datumsquelle; Höchstbetrag raten; Hetzner Storage Box; Vollwiederherstellung nach `/tmp`; FinTS.
+2. **29.10.:** Suche schließt die Tastatur nach Enter, der Suchstand bleibt beim Zurück erhalten.
+3. **30.10. Mietkonto:** Zinsanteil, Standardkategorie „Sonstige Werbungskosten“, Folgeimporte mit Zeitraumerkennung, Vorschläge aus Vormonaten, Umsatzübersicht mit Korrektur.
+4. **30.10. Mieterverwaltung:** Belegung und Leerstand, Betriebskostenabrechnung (Rechner, PDF, Fassungen, Assistent), Mieterwechsel mit Wohnungsvorgaben, Übernahme aus Vertrag/Screenshot. Fehlerbehebungen: Wohnung beim Bearbeiten wählbar; Fehlermeldungen waren hinter Dialogen verdeckt, jetzt Toasts im Top-Layer und Fehler direkt im Formular. Danach mehrere Unterlagen und eine Seitenansicht für handschriftliche Verträge.
+5. **30.10. Einnahmen:** Soll/Ist, automatische Mieter-Zuordnung. Danach „automatisch als eingegangen“ mit „Ausgeblieben?“.
+6. **30.10.:** Wischen zum Löschen; Wettbewerbsanalyse (objego, immocloud, Haus & Grund).
+   - **Entscheidung:** Mahnungen und Abmahnungen bauen, **keinen eigenen Mietvertrags-Generator** (Haftungs- und Pflegerisiko; geprüfte Formulare wie Haus & Grund nutzen). Vom Nutzer mit „Ok“ angenommen.
+   - Umgesetzt: Mahnwesen und Abmahnungen.
+7. **30.10.:** Mieterliste mit Gesamtmiete; Summe zuerst oben, **auf Wunsch nach unten verschoben**. Einnahmen-Diagramme und PDF für das Finanzamt. Kaution und Kautionsmahnung.
+8. **30./31.10. Belegprüfung:**
+   - Belegprüfung mit Verknüpfung zum Beleg und Prüfvermerk.
+   - **Fehler:** „Beleg öffnen“ öffnete ein neues Fenster ohne Verlauf, „Zurück“ führte zur Startseite. **Behoben:** selbes Fenster, Zustand in der Adresse, Scroll wiederhergestellt. Suche auf den Zeitraum begrenzt.
+   - **Fehler:** „Abgabenbescheid“ wurde nicht gefunden. **Behoben:** Begriffserweiterung, Betragszeilen.
+   - **Fehler:** „+ Betrag“ war nur vorgemerkt und ging beim Öffnen anderer Belege verloren; nach der ersten Übernahme verschwand der Beleg. **Behoben:** sofort speichern, Teilübernahme sichtbar.
+9. **31.10.:**
+   - Frage nach Integration ins System-Dateimenü beantwortet: Teilen **an** die App existiert, Teilen **aus** der App existiert, als Dateiquelle in der Dateiauswahl ist eine PWA **nicht möglich** (nur mit nativer Android-App).
+   - Mehrfachauswahl und gemeinsames Teilen im Archiv umgesetzt.
 
 ---
 
 ## 7. Aktueller Entwicklungsstand
 
-### A. Vollständig umgesetzt
-Alle Funktionen mit ✅ in Abschnitt 3. Letzter Code-Commit: `5d931ee`. 100 Tests grün. Die Server-Version entspricht `5d931ee`, sofern der Nutzer zuletzt `git pull` ausgeführt hat. Für die Skriptänderungen ist kein Neubau nötig, weil die Backup-Skripte auf dem Host laufen.
+### A. Vollständig umgesetzt (im Repository, Tests grün)
+
+Alles mit ✅ in Abschnitt 3. Letzter Commit `c614f78` „Archiv: Mehrfachauswahl und gemeinsames Teilen mehrerer Dokumente“. 141 Tests grün.
 
 ### B. Teilweise umgesetzt
-- **Monatlicher Wiederherstellungstest (neue Fassung):** im Code und im Cron (`0 5 1 * *`), lokal getestet. **Auf dem Server noch nicht erfolgreich gelaufen.** Der erste Versuch am 29.10. scheiterte, weil das B2-Download-Kontingent (1 GB/Tag frei) durch den vorherigen Vollrestore aufgebraucht war. Die eigentliche Datenintegrität ist trotzdem belegt: Der vorherige Lauf hat alle 3,3 GB heruntergeladen und mit Prüfsummen verifiziert, nur das Ablegen in `/tmp` scheiterte.
+
+- Monatlicher Wiederherstellungstest (neue Fassung): erster erfolgreicher Serverlauf ❓.
+- TypeScript-Typprüfung seit dem 29.10. nicht gelaufen (kein `tsc` in der Arbeitsumgebung). Das Frontend baut mit esbuild, die Oberflächen sind per Playwright geprüft.
 
 ### C. Beschlossen, noch nicht umgesetzt
-- Keine offenen Code-Aufträge.
+
+- Keine offenen Aufträge.
 
 ### D. Bekannte Probleme und Risiken
-- **B2-Gratisgrenze:** höchstens 1 GB Download pro Tag. Eine Vollwiederherstellung im Ernstfall braucht ein angehobenes Limit unter „Caps & Alerts“ (rund 1 Cent/GB).
-- Ab etwa 12 GB Archivgröße übersteigt der monatliche Teiltest (1/12) das Tageskontingent. Ab rund 10 GB ist auch der kostenlose B2-Speicher voll.
-- `restic check` und `unlock` erzeugen Class-B-Transaktionen (2.500/Tag frei). Im Normalbetrieb ist das unkritisch.
-- Kein Monitoring der App selbst, nur des Backups.
-- Das Restore-Test-Kriterium „Originaldateien ≥ Dokumente“ könnte bei Dokumenten ohne Original falsch Alarm schlagen. Bisher ist kein solcher Fall bekannt.
 
-### E. Offene Entscheidungen
-- App-Icon Option A „Register“ umsetzen? (Nutzer hat nicht bestätigt.)
-- Mistral-API-Schlüssel eintragen (KI-Einordnung)? Optional, Status unbekannt.
+1. **Serverstand unbekannt.**
+   - Bestätigt ist ein früheres Update („Das app update wurde eingestellt“), vermutlich mit dem Suchstand vom 29.10.
+   - Danach meldete der Nutzer: „Der vorherige Befehl hat nicht funktioniert“. Die erbetene Diagnose mit Screenshot ist nicht eingegangen.
+   - Seitdem wurde nach jedem Commit der Update-Befehl gegeben, **ohne Rückmeldung**. Ob Commits ab `27c9dcd` auf dem Server laufen, ist ❓.
+2. **Kaution über das Mietkonto:** wird bei Zuordnung zum Mieter als Miete gezählt (keine Umsatzart „Kaution“).
+3. **Handschrift:** Handschriftliche Verträge sind lokal nicht auslesbar; der Ausweg ist „Selbst eintragen mit Ansicht“. Mistral-Vision wurde angeboten, ist ❓ nicht entschieden und braucht einen Schlüssel sowie die Einwilligung des Nutzers.
+4. **Bescheid-Zerlegung und Mieter-Erkennung** sind nur mit synthetischen Testtexten geprüft. Ein echter Bescheid der Verbandsgemeinde und ein anonymisierter objego-Screenshot wurden erbeten, sind aber **nicht eingegangen**.
+5. **Teilen-Ziel** nimmt nur PDF und Bilder an (kein Word/Excel/.eml).
+6. **„Angenommene“ Mieteingänge** sind kein Zahlungsnachweis. Das Finanzamt-PDF weist sie getrennt aus; vor dem Versand sollten die Kontoumsätze bis Jahresende eingelesen sein.
+7. **Grenzen und Betrieb:**
+   - B2-Gratisgrenzen: 1 GB Download pro Tag, 10 GB Speicher.
+   - Kein Monitoring der App selbst.
+   - `/tmp` auf dem Server liegt im RAM.
+
+### E. Offene Entscheidungen (angeboten, keine Antwort)
+
+- Teilen-Ziel um Word, Excel und E-Mail-Dateien erweitern? 💡
+- Zuordnung „Kaution“ für Kontoumsätze? 💡
+- Native Android-App als Dateiquelle in der Dateiauswahl (großer Aufwand, APK)? 💡, nicht empfohlen
+- Mistral-Vision für handschriftliche Verträge? 💡
+- App-Icon „Register“? 💡
+- Mietvertrags-Generator: ❌ nicht empfohlen. Der Nutzer hat den Vorschlag (Mahnungen und Abmahnungen zuerst) angenommen; ein Generator war danach kein Thema mehr.
 
 ### F. Zuletzt bearbeitet
-Backup-Härtung: healthchecks.io-Ping in `backup.sh`, Wiederherstellungstest ohne Vollkopie, `restic unlock` vor dem Backup. Der Nutzer sollte zuletzt den Abbruch mit Strg+C ausführen, dann `git pull` und den Check über `curl "$HEALTHCHECK_URL"` wieder auf grün setzen. **Ob er das getan hat, ist nicht bestätigt.**
+
+Mehrfachauswahl im Archiv und in der Suche mit gemeinsamem Teilen und ZIP (`c614f78`). Davor: sofortiges Speichern in der Belegprüfung (`ce71a3f`).
 
 ---
 
 ## 8. Offene Aufgaben und Roadmap (priorisiert)
 
-| Prio | Aufgabe | Art | Abhängigkeit |
-| --- | --- | --- | --- |
-| 1 | Prüfen: Nachtsicherung vom 30.10. vorhanden (`restic snapshots`), healthchecks.io grün | Betrieb | – |
-| 2 | Wiederherstellungstest einmal manuell ausführen: `. /root/.restic-env && bash scripts/restore-test.sh` (frühestens nach dem Kontingent-Reset um 1:00 Uhr) | Unvollständig | 1 |
-| 3 | Backup-Passwort (`/root/.restic-pass`), keyID und applicationKey offline sichern (Passwortmanager und Papier) | Sicherheit | – |
-| 4 | **2FA aktivieren** in SmartArchive (Einstellungen → Konto und Sicherheit), bei Backblaze, netcup und GitHub | Sicherheit | – |
-| 5 | **Dropbox-Entwickler-App löschen** (dropbox.com/developers/apps) | Sicherheit | – |
-| 6 | **Dropbox kündigen**, erst nach einigen erfolgreichen Nachtsicherungen | Ziel | 1, 2 |
-| 7 | Optional: Mistral-Schlüssel, Trainingsnutzung abschalten, Auftragsverarbeitungsvertrag | Erweiterung | – |
-| 8 | Optional: App-Icon „Register“ umsetzen | Design | Entscheidung |
+| Prio | Aufgabe | Art |
+| --- | --- | --- |
+| 1 | **Serverstand klären:** Update-Befehl ausführen lassen, Screenshot mit `git log --oneline -1` (erwartet `c614f78` oder neuer) und Container-Status; bei Fehlern Ursache analysieren | Kritisch/Betrieb |
+| 2 | Nach dem Update auf dem Handy testen: Mieter, Einnahmen, Betriebskosten-Belegprüfung, Mehrfachauswahl/Teilen | Verifikation |
+| 3 | TypeScript-Prüfung `npx tsc --noEmit` in einer Umgebung mit npm nachholen, Typfehler beheben | Technische Verbesserung |
+| 4 | Backup-Prüfung: Nachtsicherungen, healthchecks.io grün, Wiederherstellungstest einmal manuell | Betrieb |
+| 5 | Mit echten (anonymisierten) Unterlagen Erkennung nachschärfen: Abgabenbescheid der Verbandsgemeinde, objego-Screenshot | Unvollständig |
+| 6 | Mieterdaten der Hauptstraße 15 vollständig anlegen (5 Parteien), Vermieterangaben ausfüllen, Kautionen erfassen | Nutzung |
+| 7 | Entscheidungen aus 7 E einholen | Offen |
+| 8 | Sicherheit: 2FA in SmartArchive, B2, netcup, GitHub; Backup-Passwort offline; Dropbox-Entwickler-App löschen; Dropbox kündigen | Betrieb |
+| 9 | Optional: Kaution-Umsatzart, weitere Dateitypen im Teilen-Ziel, Mistral-Vision, App-Icon | Optional |
 
 ---
 
 ## 9. Verbindliche Entwicklungsregeln
 
 **Kommunikation**
-- Deutsch, **Sie-Form**. Fachlich präzise, ohne unnötige Einleitung.
-- Der Nutzer arbeitet am **Android-Handy mit Termius (SSH)**. Serverbefehle kommen deshalb als **kopierfertige Blöcke** mit klarer Anweisung („einfügen und **Enter**“) und mit Angabe, welches Ergebnis erscheinen soll und was zu tun ist, wenn nicht. Bitte um einen Screenshot zur Kontrolle.
+
+- Deutsch, **Sie-Form**, fachlich präzise, ohne lange Einleitung. Ergebnis zuerst.
+- Fachbegriffe beim ersten Auftreten kurz erklären.
+- Restrisiken ehrlich benennen, nichts beschönigen.
+- Der Nutzer arbeitet am **Android-Handy mit Termius (SSH)**:
+  - Serverbefehle als **kopierfertige Blöcke** mit der Anweisung „einfügen und **Enter**“.
+  - Dazu das erwartete Ergebnis, was zu tun ist, wenn es abweicht, und die **Bitte um einen Screenshot**.
+  - Befehle mit `&&` verketten, Ausgaben mit `tail`/`grep` kürzen.
+  - Abbruch mit Strg+C erklären.
+- Nach jedem Commit den Update-Befehl nennen (siehe 2.7).
+- Screenshots genau lesen: auf Uhrzeit und den Befehl achten, der die Ausgabe erzeugt hat.
 - Nicht unnötig nachfragen. Bei Wahlmöglichkeiten eine Empfehlung geben.
 
-**Sicherheit**
-- Der Nutzer darf **keine Schlüssel oder Passwörter** in den Chat schicken: kein applicationKey, kein Backup-Passwort, keine Tokens.
-- Geheimnisse werden auf dem Server über `read -rsp` eingegeben (unsichtbar). **Keine Screenshots von Passwörtern.**
-- Ist ein Geheimnis sichtbar geworden, Neuerzeugung empfehlen.
+**Sicherheit und Datenschutz**
 
-**Fachliche Grundregeln (nicht ändern ohne ausdrücklichen Auftrag)**
-- **Keine steuerliche Berechnung oder Bewertung.** Die App dokumentiert nur. Prüfhinweise ja, Rechenwerte nein.
-- **Privat und Vermietung strikt getrennt.** Ein Bereichswechsel geschieht nie automatisch.
-- **Originale bleiben unverändert.** Ersetzte Dateien bleiben erhalten (Rolle `replaced`). Gelöscht wird nur in den Papierkorb.
-- **Datum nur aus dem erkannten Dokumenttext.** Nie Upload-Datum, nie Dateiname oder Titel. Ist es unklar, fragt die App nach.
-- **Kein Raten von Beträgen.** Ohne eindeutigen Endbetrag gibt es eine Auswahlliste.
-- Automatisch erfasste Ausgaben zählen sofort, bleiben aber erkennbar (`origin`) und jederzeit korrigierbar. Angenommene Zahlungsdaten sind gekennzeichnet.
-- Automatik nur bei hoher Sicherheit, alles Unsichere als Rückfrage in den Eingang.
-- KI ist optional, EU-Anbieter, sendet nur Textauszüge und ist pro Ordner sperrbar.
+- **Keine Schlüssel oder Passwörter in den Chat** (applicationKey, Backup-Passwort, Tokens). Geheimnisse werden auf dem Server mit `read -rsp` eingegeben. Keine Screenshots von Passwörtern. Ist ein Geheimnis sichtbar geworden, Neuerzeugung empfehlen.
+- **Echte Mieterlisten nicht in den Chat**: Eine Kopfzeile mit Beispieldaten genügt.
+- **KI-Nutzung für Verträge und Bilder nur mit ausdrücklicher Einwilligung** (personenbezogene Daten).
+- Keine Namen oder Kontaktdaten von Mietern im Änderungsprotokoll.
+
+**Fachliche Grundregeln**
+
+- **Keine steuerliche Berechnung oder Bewertung**, keine rechtliche Bewertung; Schwellen nur rechnerisch als Hinweis.
+- **Privat und Vermietung strikt getrennt**, Bereichswechsel nie automatisch.
+- **Originale bleiben unverändert**, Löschen nur in den Papierkorb.
+- **Datum nur aus dem erkannten Dokumenttext.**
+- **Kein Raten von Beträgen.** Unklares wird zur Auswahl oder Rückfrage.
+- **Automatik nur bei hoher Sicherheit**; automatisch Erfasstes bleibt erkennbar und korrigierbar.
+- KI ist optional, EU (Mistral), sendet nur Textauszüge und ist pro Ordner sperrbar.
+- Keine ungefragten neuen Features. Vorschläge als Angebot formulieren.
 
 **Technik und Code**
-- Bestehende Architektur beibehalten: Starlette, SQLite/FTS5, Worker, React/esbuild, keine zusätzlichen Frameworks ohne Grund.
-- Datenbankänderungen **nur als neue Migration** am Ende von `MIGRATIONS` in `db.py`, bestehende nie ändern.
-- Einmalige Datenkorrekturen für Bestandsdaten als Startlauf in `main.py` mit Einmal-Marker in `settings`.
-- Frontend-Assets **mit Prüfsumme im Namen** bauen (`build.mjs`). Bei Änderungen am Service Worker den Cache-Namen erhöhen.
-- Zu jeder Änderung Tests ergänzen. `pytest` muss grün sein, das Frontend muss bauen (`npm run build`, `tsc --noEmit`). Das gebaute `backend/static` wird mit eingecheckt.
-- Commits auf `main`, kurze deutsche Commit-Nachricht. Danach push und dem Nutzer den Server-Update-Befehl geben (`git pull && docker compose up -d --build`).
-- Fehleranalyse: erst Ursache belegen (Logs, Screenshot), dann beheben. Kein Raten. Bei eigenem Fehler offen benennen.
-- Keine ungefragten neuen Features. Vorschläge als Angebot formulieren.
+
+- **Architektur beibehalten:** Starlette, SQLite/FTS5, Worker, React/esbuild, keine zusätzlichen Frameworks, keine externen CDNs (wegen der CSP).
+- **Datenbank:**
+  - Änderungen **nur als neue Migration am Ende von `MIGRATIONS`**, bestehende nie ändern.
+  - Einmalige Bestandskorrekturen als Startlauf in `main.py` mit Einmal-Marker.
+- **Build:**
+  - Assets mit Prüfsumme im Namen.
+  - Bei Änderungen am Service Worker den Cache-Namen erhöhen.
+  - `backend/static` mit einchecken.
+- **Tests:** Zu jeder Änderung Tests ergänzen. `pytest` muss grün sein, das Frontend muss bauen. Oberflächenänderungen im Browser auf Handygröße prüfen.
+- **Commits:**
+  - Commit auf `main` mit deutscher Commit-Nachricht, die die Ursache nennt.
+  - Abschluss mit den Zeilen `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>` und `Claude-Session: …` (die Session-URL des jeweiligen Chats).
+  - Danach `git fetch`, `rebase`, `push`.
+- **Fehleranalyse:** erst die Ursache belegen (Logs, Screenshot, Reproduktion), dann beheben. Eigene Fehler offen benennen.
+- Bei größeren Ständen die Dokumentation in `docs/` fortschreiben.
 
 ---
 
 ## 10. Technischer Übergabekontext
 
-**Zugänge und Orte**
+**Orte und Zugänge**
 
 | Was | Wo |
 | --- | --- |
 | Repository | `github.com/crimepayzbrothers-source/Smartarchive` (privat, `main`) |
-| Server | netcup VPS Lite, Debian 13, Projekt unter `/root/smartarchive`, Daten in `/root/smartarchive/data` |
-| App-URL | `https://v2202610445998547434.taila12eaf.ts.net/` (nur im Tailscale-Netz) |
-| Backup | restic-Repo `b2:smartarchive-can-2303:smartarchive`, Zugangsdaten in `/root/.restic-env`, Passwort in `/root/.restic-pass` (beide chmod 600), Log `/var/log/smartarchive-backup.log` |
-| Cron (root) | `30 3 * * *` Backup, `0 5 1 * *` Wiederherstellungstest; beide laden vorher `/root/.restic-env` |
-| Überwachung | healthchecks.io-Check „SmartArchive Backup“ (Cron `30 3 * * *`, Europe/Berlin, Grace 2 h), URL in `HEALTHCHECK_URL` |
+| Server | netcup VPS, Debian 13, Projekt `~/smartarchive` (root), Daten `~/smartarchive/data` |
+| App | `https://v2202610445998547434.taila12eaf.ts.net/`, nur im Tailscale-Netz |
+| Backup | restic-Repo `b2:smartarchive-can-2303:smartarchive`; Zugang `/root/.restic-env`, Passwort `/root/.restic-pass`; Log `/var/log/smartarchive-backup.log`; Cron `30 3 * * *` (Backup) und `0 5 1 * *` (Wiederherstellungstest) |
 
-**Zentrale Stellen im Code**
-- Pipeline: `documents.ingest` → `documents.process` → `classify.analyze`/`decide`, `duplicates.find`/`mark`, `invoices.capture_on_upload`/`ensure_expense`, `documents.index_document`.
-- Datum: `extract.date_analysis`. Beträge: `extract.amount_candidates`, `extract.detect_amount`. Rechnungsfelder: `invoices.fields`, `invoices.extract_for_document`.
-- Bank: `banking.parse_csv`, `analyze`, `auto_apply`, `decide`, `undo`.
-- Exporte: `exports.journal`, `to_csv`, `to_xlsx`, `to_pdf_bundle(with_receipts)`, `full_archive_zip`, `find_issues`.
-- API-Schwerpunkte: `api/docs.py` (Upload, Dokumente, Eingang, `/invoice`, `/date`, `/extract`, `/duplicate`, `/no-expense`), `api/realestate.py` (Objekte, Ausgaben, Exporte), `api/bank.py`.
+**Zentrale Funktionen**
 
-**Nicht ohne Weiteres ändern:** Migrationsreihenfolge, die SHA-256-Ablage der Originale, das Jahresdatum `COALESCE(paid_on, invoice_date, doc_date)`, die Prüfsummen-Assets, die strikte Bereichstrennung, die lokale Bindung `127.0.0.1:8080` (Zugriff nur über Tailscale).
+| Bereich | Funktionen |
+| --- | --- |
+| Pipeline | `documents.ingest/process`, `classify.analyze/decide`, `invoices.capture_on_upload/ensure_expense`, `duplicates.find` |
+| Bank | `banking.import_csv/analyze/auto_apply/decide/undo/interest_share/coverage/_tenant_match` |
+| Mieter | `tenancy.save/end/delete/load/span/term_at/occupancy/property_occupancy`; `tenancy_extract.parse/match_unit/ai_parse/merge/preview_pages` |
+| Einnahmen | `income.monthly_soll/payment_month/month_rows/split_parts/overview/match_by_name/link_unassigned`; `income_pdf.render` |
+| Schreiben | `dunning.open_months/threshold/build/render/create/archive_letter/default_salutation`; `abmahnung.build/render/late_payments/third_workday`; `deposit.get/save/schedule/brief`; `deposit_letter.build/render/create`; Briefkopf `bk_pdf.letterhead` |
+| Betriebskosten | `betriebskosten.compute/importable_expenses/add_cost/suggest_type/_checks`; `bk_receipts.scan/search_period/import_positions/parse_bescheid/expanded_match/amount_lines` |
+| Suche | `search.search(..., date_from, date_to, match)` |
 
-**Risiken:** SQLite ist auf einen Nutzer ausgelegt. Der VPS ist ein einzelner Server, abgesichert durch das B2-Backup. Für eine Wiederherstellung braucht man unbedingt das Backup-Passwort. B2-Gratisgrenzen siehe 7 D.
+**Nicht ohne Weiteres ändern:**
+
+- Migrationsreihenfolge
+- SHA-256-Ablage der Originale
+- Jahreszuordnung `COALESCE(paid_on, invoice_date, doc_date)`
+- `EARLY_DAY = 25`
+- Snapshot-Prinzip der Schreiben
+- Prüfsummen-Assets
+- strikte Bereichstrennung
+- Bindung an `127.0.0.1:8080`
+- CSP
+
+**Risiken:**
+
+- Einzelner VPS, abgesichert durch das B2-Backup; ohne Backup-Passwort keine Wiederherstellung.
+- Gezielte Wiederherstellungen: restic speichert die Pfade relativ (`/data/files/...`, `/data/backup/...`). Den Pfad deshalb vorher mit `restic ls latest` ermitteln, nicht mit `--include /root/smartarchive/...`. Die Live-Datenbank wird vor dem Backup konsistent nach `data/backup/` kopiert; `.env` und `/root/.restic-*` sind nicht in der Sicherung.
+- SQLite ist auf einen Nutzer ausgelegt.
+- Die Arbeitskopie in der Claude-Umgebung existiert nur in der jeweiligen Sitzung. Ein neuer Chat muss das Repository neu einbinden.
 
 ---
 
@@ -460,26 +596,27 @@ Backup-Härtung: healthchecks.io-Ping in `backup.sh`, Wiederherstellungstest ohn
 
 | Punkt | Wie klären |
 | --- | --- |
-| Ursprüngliche Detailanforderungen und Übergabetext der allerersten Phase (nur als Zusammenfassung erhalten) | README und Code gelten als maßgeblich |
-| Ist 2FA in SmartArchive aktiviert? | Nutzer fragen bzw. Einstellungen ansehen |
-| Wurde das Backup-Passwort nach dem Screenshot-Vorfall neu erzeugt, **bevor** `restic init` lief, und ist es offline gesichert? | Nutzer fragen. Wichtig: Das Repo ist mit dem Passwort verschlüsselt, das beim Init in `/root/.restic-pass` stand. |
-| Ist die Dropbox-Entwickler-App gelöscht? Ist Dropbox gekündigt? | Nutzer fragen |
-| Ist `MISTRAL_API_KEY` gesetzt? | `grep -c MISTRAL_API_KEY=. ~/smartarchive/.env` auf dem Server |
-| Anzahl und Namen der angelegten Mietobjekte in der App | In der App bzw. DB prüfen (laut Nutzer: Berliner Straße 21/23/32 Bad Sobernheim, Hauptstraße 15 Schmidt-Hachenbach; ob alle angelegt sind, ist unbekannt) |
-| Hat der Nutzer zuletzt `git pull` ausgeführt und den Health-Check auf grün gesetzt? | `git log --oneline -1` auf dem Server sollte `5d931ee` zeigen |
-| Wie genau sah das empfohlene Icon „Register“ (Option A) aus? Der Entwurf liegt nur im alten Chat. | Nutzer bei Bedarf um einen Screenshot oder eine Beschreibung bitten |
-| Genaue Commerzbank-CSV-Spalten des Nutzers | Durch Tests abgedeckt. Bei Abweichungen eine echte Datei, ohne sensible Daten, ansehen. |
+| Läuft auf dem Server `c614f78`? Woran scheiterte „Der vorherige Befehl hat nicht funktioniert“? | Update-Befehl ausführen lassen, Screenshot |
+| Typfehler im Frontend? | `npx tsc --noEmit` |
+| Ist `MISTRAL_API_KEY` gesetzt? | Auf dem Server prüfen: `grep -c MISTRAL_API_KEY=. ~/smartarchive/.env` |
+| Welche Mietverhältnisse, Kautionen und Vermieterangaben sind in der App erfasst? | In der App ansehen |
+| Wie sieht ein echter Abgabenbescheid bzw. objego-Screenshot aus (für die Erkennung)? | Anonymisierte Datei erbitten |
+| Ist die App über Chrome „App installieren“ installiert (Voraussetzung fürs Teilen-Ziel)? | Nutzer fragen |
+| Backup: Läuft der Wiederherstellungstest erfolgreich? Ist healthchecks.io grün? Ist 2FA aktiviert? Ist Dropbox gekündigt? | Nutzer bzw. Server |
+| Welche Rolle spielen Berliner Straße 23/32 heute (vermietet laut älteren Angaben, laut Nutzer zuletzt „nur Hauptstraße 15 vermietet“)? | Nutzer fragen |
+| Was genau zur Frage des kommerziellen Potenzials geantwortet wurde | Nicht dokumentiert; es gibt keinen Beschluss |
+| Lokale Git-Historie beginnt bei `55cbe22` (flacher Klon); frühere Commit-IDs nur aus der alten Übergabe | Bei Bedarf vollständig klonen |
 
 ---
 
 ## 12. Konkreter nächster Schritt
 
-1. **Zuletzt:** Backup nach Backblaze B2 fertig eingerichtet, Ausfall-Mail über healthchecks.io, Wiederherstellungstest neu gebaut (Commits `468711d`, `a8385cb`, `5d931ee`).
-2. **Offen:** Bestätigung, dass der Health-Check grün ist. Erster erfolgreicher Lauf des neuen Wiederherstellungstests.
-3. **Als Nächstes**, auf dem Server:
-   ```bash
-   cd ~/smartarchive && git pull -q && . /root/.restic-env && restic snapshots | tail -n 4 && bash scripts/restore-test.sh 2>&1 | grep -v "^\[" | tail -n 4
+1. **Zuletzt entwickelt:** Mehrfachauswahl und gemeinsames Teilen im Archiv (`c614f78`). Davor: Belegprüfung der Betriebskosten mit Stichwortsuche und sofortigem Speichern.
+2. **Offen:** Bestätigung, dass der Server aktualisiert ist und alles läuft. Ausstehende Entscheidungen aus 7 E.
+3. **Als Nächstes:** Den Nutzer bitten, diesen Befehl auszuführen:
    ```
-   Erwartet wird eine neue Sicherung von 3:30 Uhr, dazu „Datenbank: Integrität ok …“ und „Wiederherstellungstest erfolgreich.“ Danach die Punkte 3–6 aus Abschnitt 8.
-4. **Benötigt:** Screenshot der Ausgabe. Für Codearbeiten das Repository (Klon von `main`).
-5. **Fortsetzung ohne Grundsatzdiskussion:** Die Architektur und die Regeln in Abschnitt 9 sind gesetzt. Neue Wünsche des Nutzers werden in derselben Struktur umgesetzt: Migration, Backend-Logik mit Tests, Frontend, Build, Commit und Push, Update-Befehl für den Server.
+   cd ~/smartarchive && git pull && git log --oneline -1 && docker compose up -d --build 2>&1 | tail -n 25 && docker compose ps
+   ```
+   Erwartet wird die Zeile `c614f78 …` (oder neuer), Container `app` und `worker` „running“. Bei einer Abweichung erst die Ursache aus Log oder Screenshot klären (`docker compose logs app --tail 50`).
+4. **Benötigt:** Screenshot der Ausgabe. Für Codearbeit einen Klon von `main`, Python 3.12 mit den Abhängigkeiten aus `requirements.txt` und Node/npm für den Build.
+5. **Fortsetzung ohne Grundsatzdiskussion:** Architektur, Regeln (Abschnitt 9) und Fachentscheidungen sind gesetzt. Neue Wünsche nach diesem Muster umsetzen: Ursache bzw. Ist-Stand im Code prüfen → Migration (falls nötig) → Backend mit Tests → Frontend → Build → Browserprüfung auf Handygröße → Commit und Push → Update-Befehl und Zusammenfassung auf Deutsch an den Nutzer.
