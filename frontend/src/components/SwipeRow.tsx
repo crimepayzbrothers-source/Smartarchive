@@ -5,8 +5,9 @@ import { Icon, Sheet } from "./ui";
 const OPEN = 96; // Breite der freigelegten Schaltfläche (px)
 const SKIP = "input, select, textarea, button, label";
 
-export function SwipeRow({ children, onDelete, disabled, className = "", label = "Löschen", asking }: {
+export function SwipeRow({ children, onDelete, disabled, className = "", label = "Löschen", asking, skip = SKIP, icon = "trash", tone = "" }: {
   children: ReactNode; onDelete: () => void; disabled?: boolean; className?: string; label?: string; asking?: boolean;
+  skip?: string; icon?: string; tone?: "" | "neutral";
 }) {
   const [dx, setDx] = useState(0);
   useEffect(() => { if (!asking) setDx(0); }, [asking]); // Rückfrage abgebrochen → Zeile schließt sich wieder
@@ -16,7 +17,7 @@ export function SwipeRow({ children, onDelete, disabled, className = "", label =
 
   const down = (e: PointerEvent<HTMLDivElement>) => {
     swallowClick.current = false;
-    if (disabled || (e.pointerType === "mouse" && e.button !== 0) || (e.target as HTMLElement).closest(SKIP)) return;
+    if (disabled || (e.pointerType === "mouse" && e.button !== 0) || (e.target as HTMLElement).closest(skip)) return;
     st.current = { x: e.clientX, y: e.clientY, base: dx, mode: "", moved: false, width: e.currentTarget.offsetWidth };
   };
   const move = (e: PointerEvent<HTMLDivElement>) => {
@@ -45,14 +46,14 @@ export function SwipeRow({ children, onDelete, disabled, className = "", label =
   };
   const click = (e: MouseEvent) => {
     if (swallowClick.current) { swallowClick.current = false; e.preventDefault(); e.stopPropagation(); return; }
-    if (dx !== 0 && !(e.target as HTMLElement).closest(SKIP)) { e.preventDefault(); e.stopPropagation(); setDx(0); }
+    if (dx !== 0 && !(e.target as HTMLElement).closest(skip)) { e.preventDefault(); e.stopPropagation(); setDx(0); }
   };
 
   return (
     <div className={`swipe-row ${dx ? "open" : ""}`}>
       {!disabled && (
-        <button type="button" className="swipe-action" tabIndex={dx ? 0 : -1} aria-hidden={!dx} onClick={onDelete}>
-          <Icon name="trash" size={18} /><span>{label}</span>
+        <button type="button" className={`swipe-action ${tone}`} tabIndex={dx ? 0 : -1} aria-hidden={!dx} onClick={onDelete}>
+          <Icon name={icon} size={18} /><span>{label}</span>
         </button>
       )}
       <div className={`swipe-front ${className}`} style={{ transform: dx ? `translateX(${dx}px)` : undefined, transition: drag ? "none" : undefined }}

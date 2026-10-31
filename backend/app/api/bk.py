@@ -277,6 +277,26 @@ async def receipt_search(request: Request, conn, user):
     return await run_in_threadpool(bk_receipts.search_period, conn, period_id, q)
 
 
+class HiddenIn(BaseModel):
+    document_id: int
+    hidden: bool = True
+
+
+@endpoint()
+async def receipt_hidden_list(request: Request, conn, user):
+    period_id = path_int(request)
+    _period_or_404(conn, period_id)
+    return bk_receipts.hidden_list(conn, period_id)
+
+
+@endpoint()
+async def receipt_hidden_set(request: Request, conn, user):
+    period_id = path_int(request)
+    data = await body(request, HiddenIn)
+    _run(conn, lambda: bk_receipts.set_hidden(conn, period_id, data.document_id, data.hidden))
+    return bk_receipts.hidden_list(conn, period_id)
+
+
 class ReceiptImportIn(BaseModel):
     items: list[dict] = Field(default_factory=list, max_length=200)
 
@@ -561,6 +581,8 @@ routes = [
     Route("/api/bk/periods/{id:int}/receipt-scan", receipt_scan, methods=["GET"]),
     Route("/api/bk/periods/{id:int}/receipt-scan/import", receipt_import, methods=["POST"]),
     Route("/api/bk/periods/{id:int}/receipt-search", receipt_search, methods=["GET"]),
+    Route("/api/bk/periods/{id:int}/receipt-hidden", receipt_hidden_list, methods=["GET"]),
+    Route("/api/bk/periods/{id:int}/receipt-hidden", receipt_hidden_set, methods=["PUT"]),
     Route("/api/bk/costs/{id:int}", patch_cost, methods=["PATCH"]),
     Route("/api/bk/costs/{id:int}", delete_cost, methods=["DELETE"]),
     Route("/api/bk/periods/{id:int}/values", set_value, methods=["PUT"]),

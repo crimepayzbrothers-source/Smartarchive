@@ -530,6 +530,15 @@ MIGRATIONS: list[str] = [
     UPDATE bk_costs SET verified_at = created_at WHERE origin = 'manuell';
     UPDATE bk_costs SET verified_at = created_at WHERE origin = 'ausgabe' AND expense_id IN (SELECT id FROM expenses WHERE origin = 'user');
     """,
+    # 19 – Belegprüfung: für eine Abrechnung als irrelevant ausgeblendete Belege (nichts wird gelöscht)
+    """
+    CREATE TABLE bk_hidden_receipts (
+        period_id INTEGER NOT NULL REFERENCES bk_periods(id) ON DELETE CASCADE,
+        document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (period_id, document_id)
+    );
+    """,
 ]
 
 

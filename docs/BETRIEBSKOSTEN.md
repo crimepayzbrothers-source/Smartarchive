@@ -173,3 +173,5 @@ Schritt „Kosten“ → „Belege prüfen“ durchsucht die Belege des Objekts 
   Antippen von „geprüft“ als ungeprüft; eine Änderung von Betrag oder Kostenart gilt als Prüfung. Die Prüfung meldet ungeprüfte
   Positionen als Warnung und Positionen ohne Beleg als Hinweis.
 - Ein zerlegter Beleg erscheint nicht mehr unter „Aus Ausgaben übernehmen“; Gesamtbetrag und Zerlegung zugleich werden als Doppelerfassung gemeldet.
+- Irrelevante Belege lassen sich in Belegprüfung und Trefferliste nach links wischen und sind dann für diese Abrechnung ausgeblendet
+  (Migration 19, `bk_hidden_receipts`; nichts wird gelöscht). „Rückgängig“ im Hinweis oder „Ausgeblendete Belege“ → „Wieder einblenden“.

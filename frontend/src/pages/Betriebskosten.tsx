@@ -281,8 +281,24 @@ function ReceiptScan({ periodId, period, meta, query, onClose, onSaved }: { peri
   // Auswahl und geänderte Beträge bis zum Speichern auf dem Gerät gemerkt (auch nach dem Öffnen eines Belegs oder einem Neustart)
   const [sel, setSel] = useState<Record<string, any>>(() => { try { return JSON.parse(localStorage.getItem(SEL_KEY) || "{}"); } catch { return {}; } });
   const [busy, setBusy] = useState(false);
+  // Irrelevante Belege für diese Abrechnung ausblenden (Wischen nach links) – gespeichert, nichts wird gelöscht
+  const { data: hiddenList, reload: reloadHidden } = useLoad(() => get<any[]>(`/api/bk/periods/${periodId}/receipt-hidden`), [periodId]);
+  const [gone, setGone] = useState<number[]>([]);  // sofort ausblenden, bevor die Listen neu geladen sind
+  const setHidden = async (doc: any, hidden: boolean) => {
+    setGone((g) => (hidden ? [...g, doc.document_id] : g.filter((x) => x !== doc.document_id)));
+    try {
+      await put(`/api/bk/periods/${periodId}/receipt-hidden`, { document_id: doc.document_id, hidden });
+      if (hidden) toast({ kind: "ok", text: `„${doc.correspondent || doc.title}“ ausgeblendet.`, action: { label: "Rückgängig", run: () => setHidden(doc, false) } });
+      reload(); reloadHidden(); setHitsRev((x) => x + 1);
+    } catch (e: any) {
+      setGone((g) => g.filter((x) => x !== doc.document_id));
+      toast({ kind: "error", text: e.message });
+    }
+  };
   const keyOf = (doc: any, p: any) => `${doc.document_id}:${p.evidence}`;
-  const hitDocs: any[] = (hits?.results || []).filter((h: any) => !h.linked);
+  const visibleHits: any[] = (hits?.results || []).filter((h: any) => !h.hidden && !gone.includes(h.document_id));
+  const hiddenHits = (hits?.results || []).length - visibleHits.length;
+  const hitDocs: any[] = visibleHits.filter((h: any) => !h.linked);
   const docs: any[] = [...(data || []).filter((x) => !hitDocs.some((h) => h.document_id === x.document_id)), ...hitDocs];
   useEffect(() => {  // Vorbelegung für neue Belege, gemerkte Auswahl bleibt
     if (!docs.length) return;
@@ -332,7 +348,9 @@ function ReceiptScan({ periodId, period, meta, query, onClose, onSaved }: { peri
   };
   const year = period.start.slice(0, 4) === period.end.slice(0, 4) ? period.start.slice(0, 4) : `${date(period.start)} – ${date(period.end)}`;
   const card = (doc: any, hit = false) => (
-    <div key={`${hit ? "h" : "s"}${doc.document_id}`} className="scan-doc">
+    <SwipeRow key={`${hit ? "h" : "s"}${doc.document_id}`} label="Ausblenden" icon="close" tone="neutral" skip="input, select, textarea, button, a"
+      onDelete={() => setHidden(doc, true)}>
+    <div className="scan-doc">
       <div className="scan-doc-head">
         <span><strong>{doc.correspondent || doc.title}</strong><span className="muted sub-line">{doc.title}{doc.doc_date ? ` · ${date(doc.doc_date)}` : ""} · {doc.why}</span></span>
         <a className="secondary small btn-link" href={`#/dokument/${doc.document_id}`}>Beleg öffnen</a>
@@ -386,15 +404,18 @@ function ReceiptScan({ periodId, period, meta, query, onClose, onSaved }: { peri
         )}
       </>}
     </div>
+    </SwipeRow>
   );
   return (
     <div className="import-box receipt-scan">
       <h3>Belegprüfung im Archiv</h3>
+      <p className="hint swipe-hint">Irrelevante Belege nach links wischen, um sie für diese Abrechnung auszublenden (nichts wird gelöscht).</p>
       {hits && (
         <div className="bk-hits">
           <h4>{hits.results.length ? `${hits.results.length} Treffer für „${query}“ (${year})` : `Keine Treffer für „${query}“ im Zeitraum ${year}`}</h4>
           {hits.hint && <p className="hint">{hits.hint}</p>}
-          {hits.results.map((h: any) => card(h, true))}
+          {visibleHits.map((h: any) => card(h, true))}
+          {hiddenHits > 0 && <p className="hint">{hiddenHits} ausgeblendete{hiddenHits === 1 ? "r Treffer" : " Treffer"} nicht angezeigt.</p>}
         </div>
       )}
       <h4>Gefundene Belege zum Zeitraum</h4>
@@ -403,7 +424,18 @@ function ReceiptScan({ periodId, period, meta, query, onClose, onSaved }: { peri
         oder über die Suche.</p>
       {error && <ErrorBox text={error} />}
       {!data ? <Loading /> : data.length === 0 ? <p className="muted">Keine weiteren passenden Belege gefunden.</p>
-        : data.filter((x) => !hitDocs.some((h) => h.document_id === x.document_id)).map((doc) => card(doc))}
+        : data.filter((x) => !gone.includes(x.document_id) && !hitDocs.some((h) => h.document_id === x.document_id)).map((doc) => card(doc))}
+      {(hiddenList?.length || 0) > 0 && (
+        <details className="hidden-receipts">
+          <summary>Ausgeblendete Belege ({hiddenList!.length})</summary>
+          <ul className="plain-list">
+            {hiddenList!.map((h: any) => (
+              <li key={h.document_id}><span>{h.correspondent || h.title}<span className="muted sub-line">{h.title}{h.doc_date ? ` · ${date(h.doc_date)}` : ""}</span></span>
+                <button type="button" className="secondary small" onClick={() => setHidden(h, false)}>Wieder einblenden</button></li>
+            ))}
+          </ul>
+        </details>
+      )}
       <div className="row-actions">
         {chosen.length > 0 && <button className="primary" disabled={busy} onClick={doImport}>{chosen.length} Position{chosen.length === 1 ? "" : "en"} speichern</button>}
         <button className="ghost" onClick={onClose}>Schließen</button>

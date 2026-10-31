@@ -20,7 +20,7 @@ from typing import Any
 
 from . import betriebskosten as bk
 from . import invoices
-from .db import row, rows
+from .db import audit, now, row, rows
 from .extract import _AMOUNT, parse_amount
 
 # Reihenfolge zählt: spezifischere Begriffe zuerst (Abwasser vor Wasser)
@@ -166,6 +166,30 @@ def _adopted(conn: sqlite3.Connection, period_id: int) -> dict[int, set[str]]:
     return out
 
 
+def _hidden(conn: sqlite3.Connection, period_id: int) -> set[int]:
+    return {r[0] for r in conn.execute("SELECT document_id FROM bk_hidden_receipts WHERE period_id = ?", (period_id,))}
+
+
+def set_hidden(conn: sqlite3.Connection, period_id: int, document_id: int, hidden: bool) -> None:
+    """Beleg für diese Abrechnung aus Belegprüfung und Suche ausblenden bzw. wieder einblenden. Löscht nichts."""
+    p = bk.load_period(conn, period_id)
+    if not conn.execute("SELECT 1 FROM documents WHERE id = ? AND property_id = ?", (document_id, p["property_id"])).fetchone():
+        raise bk.BKError("Der Beleg gehört nicht zu diesem Objekt.")
+    if hidden:
+        conn.execute("INSERT OR IGNORE INTO bk_hidden_receipts(period_id, document_id, created_at) VALUES(?,?,?)",
+                     (period_id, document_id, now()))
+    else:
+        conn.execute("DELETE FROM bk_hidden_receipts WHERE period_id = ? AND document_id = ?", (period_id, document_id))
+    audit(conn, "receipt_hidden" if hidden else "receipt_shown", "bk_period", period_id, {"document_id": document_id})
+
+
+def hidden_list(conn: sqlite3.Connection, period_id: int) -> list[dict[str, Any]]:
+    return rows(conn.execute(
+        "SELECT d.id AS document_id, d.title, d.doc_date, c.name AS correspondent, h.created_at FROM bk_hidden_receipts h "
+        "JOIN documents d ON d.id = h.document_id LEFT JOIN correspondents c ON c.id = d.correspondent_id "
+        "WHERE h.period_id = ? ORDER BY h.created_at DESC", (period_id,)))
+
+
 def _mark_adopted(entry: dict[str, Any], adopted: set[str]) -> dict[str, Any]:
     for p in entry["positions"]:
         p["adopted"] = p["evidence"] in adopted
@@ -183,11 +207,11 @@ def _entry(doc: dict[str, Any], why: str, parsed: dict[str, Any]) -> dict[str, A
 def scan(conn: sqlite3.Connection, period_id: int) -> list[dict[str, Any]]:
     """Belege des Objekts für den Zeitraum, die noch nicht in der Abrechnung sind, mit Positionsvorschlägen."""
     p = bk.load_period(conn, period_id)
-    linked, adopted = _linked(conn, period_id), _adopted(conn, period_id)
+    linked, adopted, hidden = _linked(conn, period_id), _adopted(conn, period_id), _hidden(conn, period_id)
     docs = rows(conn.execute(_DOC_SQL + "ORDER BY COALESCE(d.doc_date, d.created_at)", (p["property_id"],)))
     out = []
     for doc in docs:
-        if doc["id"] in linked:
+        if doc["id"] in linked or doc["id"] in hidden:
             continue
         ok, why = _relevant(doc, p["start"], p["end"])
         if not ok:
@@ -272,7 +296,7 @@ def search_period(conn: sqlite3.Connection, period_id: int, query: str) -> dict[
     p = bk.load_period(conn, period_id)
     res = search.search(conn, query, area="vermietung", property_id=p["property_id"], date_from=p["start"], date_to=p["end"],
                         match=expanded_match(query), limit=50)
-    linked, adopted = _linked(conn, period_id), _adopted(conn, period_id)
+    linked, adopted, hidden = _linked(conn, period_id), _adopted(conn, period_id), _hidden(conn, period_id)
     out = []
     for r in res["results"]:
         doc = row(conn.execute(_DOC_SQL + "AND d.id = ?", (p["property_id"], r["id"])))
@@ -281,6 +305,7 @@ def search_period(conn: sqlite3.Connection, period_id: int, query: str) -> dict[
         snippet = "".join(x["t"] for x in r["snippet"]).strip()
         entry = _entry(doc, f"Treffer: {snippet}" if snippet else "Treffer im Titel", _proposal(conn, doc, strict=False))
         entry["linked"] = doc["id"] in linked
+        entry["hidden"] = doc["id"] in hidden
         entry["snippet"] = r["snippet"]
         entry["amount_lines"] = amount_lines(doc["content"] or "")
         out.append(_mark_adopted(entry, adopted.get(doc["id"], set())))

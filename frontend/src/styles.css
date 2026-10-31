@@ -823,3 +823,8 @@ select.invalid, input.invalid { border-color: var(--danger); box-shadow: 0 0 0 3
   border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 8px 24px -10px rgba(0,0,0,.35); }
 .pick-count { flex: 1; font-weight: 600; font-size: .92rem; }
 .doc-list.selecting { padding-bottom: 4.5rem; }
+.swipe-action.neutral { background: var(--ink-2); color: var(--surface); }
+.receipt-scan .swipe-row { border-radius: 0; }
+.receipt-scan .swipe-front { background: var(--surface-2); }
+.hidden-receipts { margin-top: .8rem; font-size: .9rem; }
+.hidden-receipts summary { cursor: pointer; color: var(--petrol); font-weight: 560; }

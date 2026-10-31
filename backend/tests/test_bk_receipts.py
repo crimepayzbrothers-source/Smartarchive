@@ -156,3 +156,24 @@ def test_partial_adoption_is_kept_and_not_duplicated(client):
     assert client.post(f"/api/bk/periods/{period}/receipt-scan/import", json={"items": [item]}, headers=HEADERS).json()["imported"] == 0
     d = client.get(f"/api/bk/periods/{period}").json()
     assert sum(len(l["items"]) for l in d["lines"]) == 1
+
+
+def test_hide_irrelevant_receipts(client):
+    pid, units, t, period = _setup(client)
+    doc = client.post("/api/upload", data={"area": "vermietung", "property_id": str(pid)},
+                      files=[("files", ("abgaben.pdf", make_pdf(BESCHEID), "application/pdf"))], headers=HEADERS).json()["created"][0]
+    run_worker()
+    assert [d["document_id"] for d in client.get(f"/api/bk/periods/{period}/receipt-scan").json()] == [doc]
+    # Ausblenden: verschwindet aus der Belegprüfung, in der Suche als ausgeblendet markiert, nichts gelöscht
+    r = client.put(f"/api/bk/periods/{period}/receipt-hidden", json={"document_id": doc}, headers=HEADERS)
+    assert r.status_code == 200 and [h["document_id"] for h in r.json()] == [doc]
+    assert client.get(f"/api/bk/periods/{period}/receipt-scan").json() == []
+    hit = client.get(f"/api/bk/periods/{period}/receipt-search", params={"q": "Abgabenbescheid"}).json()["results"][0]
+    assert hit["hidden"] is True
+    assert client.get(f"/api/documents/{doc}").status_code == 200
+    # Doppelt ausblenden schadet nicht; wieder einblenden
+    client.put(f"/api/bk/periods/{period}/receipt-hidden", json={"document_id": doc}, headers=HEADERS)
+    r = client.put(f"/api/bk/periods/{period}/receipt-hidden", json={"document_id": doc, "hidden": False}, headers=HEADERS)
+    assert r.json() == [] and len(client.get(f"/api/bk/periods/{period}/receipt-scan").json()) == 1
+    # Fremder Beleg wird abgelehnt
+    assert client.put(f"/api/bk/periods/{period}/receipt-hidden", json={"document_id": 9999}, headers=HEADERS).status_code == 400
